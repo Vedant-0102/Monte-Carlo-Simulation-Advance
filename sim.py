@@ -1610,13 +1610,32 @@ class PlotlyDashboard:
             hovertemplate="$%{x:,.0f}: density=%{y:.4f}<extra></extra>"
         ), row=1, col=2)
 
-        for val, lbl, col in [(S0, f"S0 ${S0:,.0f}", C["red"]),
-                               (st["mean"], f"Mean ${st['mean']:,.0f}", C["green"]),
-                               (st["median"], f"Median ${st['median']:,.0f}", C["amber"])]:
-            fig.add_vline(x=val, line_color=col, line_dash="dash", line_width=1.8,
-                          row=1, col=2,
-                          annotation_text=lbl, annotation_font=dict(color=col, size=8),
-                          annotation_position="top")
+        for val, col in [(S0, C["red"]), (st["mean"], C["green"]), (st["median"], C["amber"])]:
+            fig.add_vline(
+                x=val,
+                line_color=col,
+                line_dash="dash",
+                line_width=1.8,
+                row=1,
+                col=2,
+            )
+        fig.add_annotation(
+            xref="x2 domain",
+            yref="y2 domain",
+            x=0.02,
+            y=0.98,
+            text=(
+                f"<b>S0</b> ${S0:,.0f}<br>"
+                f"<b>Mean</b> ${st['mean']:,.0f}<br>"
+                f"<b>Median</b> ${st['median']:,.0f}"
+            ),
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
 
         lr = self.eng.log_ret.values
         fig.add_trace(go.Histogram(
