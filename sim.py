@@ -5036,3 +5036,1729 @@ class PlotlyDashboard:
             fig.show()
         return fig
 
+
+    def render_advanced_extensions(self, ext: dict, show=False):
+        payload = json.dumps(ext)
+        html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Advanced Monte Carlo Extensions - {self.eng.ticker}</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {{
+      --bg: {C["bg"]};
+      --bg2: {C["bg2"]};
+      --bg3: {C["bg3"]};
+      --border: {C["border"]};
+      --muted: {C["muted"]};
+      --text: {C["text"]};
+      --title: {C["title"]};
+      --blue: {C["blue"]};
+      --green: {C["green"]};
+      --red: {C["red"]};
+      --amber: {C["amber"]};
+      --cyan: {C["cyan"]};
+      --pink: {C["pink"]};
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--text);
+      font-family: Consolas, Menlo, monospace;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(57,197,207,0.16), transparent 24%),
+        radial-gradient(circle at 90% 0%, rgba(248,81,73,0.13), transparent 24%),
+        linear-gradient(180deg, #0f141d 0%, var(--bg) 100%);
+    }}
+    .page {{ max-width: 1380px; margin: 0 auto; padding: 28px 20px 44px; }}
+    .hero, .section {{
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: rgba(22,27,34,0.93);
+      box-shadow: 0 20px 56px rgba(0,0,0,0.18);
+    }}
+    .hero {{ padding: 24px; margin-bottom: 18px; }}
+    .hero h1, .section h2 {{ color: var(--title); margin: 0 0 8px; }}
+    .hero p, .lede, .edu, .tradeoff {{ color: var(--muted); line-height: 1.58; font-size: 13px; }}
+    .meta, .stats {{ display: grid; gap: 12px; }}
+    .meta {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }}
+    .pill, .stat {{
+      background: rgba(13,17,23,0.78);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 12px 14px;
+    }}
+    .pill b, .stat b {{ color: var(--title); display: block; margin-bottom: 4px; }}
+    .section {{ padding: 20px; margin-top: 16px; }}
+    .section-head {{ display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }}
+    .controls {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
+    .control {{
+      background: rgba(13,17,23,0.76);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px;
+    }}
+    .control label {{ display: block; margin-bottom: 8px; color: var(--title); font-size: 12px; }}
+    select, input[type="range"] {{ width: 100%; }}
+    select {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg3);
+      color: var(--text);
+      padding: 10px;
+      font-family: inherit;
+    }}
+    input[type="range"] {{ accent-color: var(--blue); }}
+    .grid2 {{ display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 16px; }}
+    .grid3 {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 16px; }}
+    .chart {{
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(13,17,23,0.74);
+      padding: 8px;
+      min-height: 450px;
+      overflow: hidden;
+      position: relative;
+    }}
+    .chart.small {{ min-height: 360px; }}
+    .edu {{
+      border-left: 3px solid var(--cyan);
+      padding-left: 12px;
+      margin-top: 12px;
+    }}
+    .tradeoff {{
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(88,166,255,0.08);
+      border: 1px solid rgba(88,166,255,0.16);
+    }}
+    @media (max-width: 980px) {{
+      .grid2, .grid3 {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="lede">Layer X</div>
+      <h1>Advanced Monte Carlo Extensions</h1>
+      <p class="lede">This layer keeps the focus strictly on stochastic simulation realism. Every module compares the baseline Monte Carlo assumption against a richer path generator, explains the math intuition, and surfaces the computational price paid for that realism.</p>
+      <div class="meta">
+        <div class="pill"><b>Ticker</b>{self.eng.ticker}</div>
+        <div class="pill"><b>Base drift</b>{self.eng.mu:+.2%}</div>
+        <div class="pill"><b>Base volatility</b>{self.eng.sigma:.2%}</div>
+        <div class="pill"><b>Extension horizon</b>{ext["horizon_days"]} trading days</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>01. Jump Diffusion And Merton Jump Process</h2>
+          <p class="lede">Continuous GBM explains day-to-day drift and diffusion, but it under-reacts to earnings shocks, macro surprises, and liquidity gaps. These jump models add Poisson jump arrivals on top of GBM and let you tune how often jumps appear, where they are centered, and how dispersed they are.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="control"><label for="jumpModel">Jump model</label><select id="jumpModel"><option value="jump_diffusion">Jump diffusion</option><option value="merton">Merton</option></select></div>
+        <div class="control"><label for="jumpLambda">Jump intensity <span id="jumpLambdaVal"></span></label><input id="jumpLambda" type="range" min="1" max="10" step="0.5" value="5" /></div>
+        <div class="control"><label for="jumpMean">Jump mean <span id="jumpMeanVal"></span></label><input id="jumpMean" type="range" min="-0.10" max="0.10" step="0.01" value="0" /></div>
+        <div class="control"><label for="jumpVol">Jump volatility <span id="jumpVolVal"></span></label><input id="jumpVol" type="range" min="0.05" max="0.30" step="0.01" value="0.15" /></div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="jumpPaths"></div>
+        <div class="stats" id="jumpStats"></div>
+      </div>
+      <div class="edu">Derivation intuition: in Merton jump diffusion, log-price increments become <code>(mu - lambda*k - 0.5*sigma^2)dt + sigma*sqrt(dt)Z + sum(Y_i)</code>, with Poisson jump count <code>N_t</code> and normal jump sizes <code>Y_i</code>. The compensator <code>lambda*k</code> prevents double-counting average jump drift.</div>
+      <div class="tradeoff">Use case: crash-sensitive equities, earnings windows, stressed barrier options. Weakness: constant jump intensity is still stylized and can overstate calm-period crash odds if not conditioned on regime.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>02. Stochastic Rates As Monte Carlo Inputs</h2>
+          <p class="lede">Vasicek and CIR are used here only as input processes that feed drift and discounting assumptions inside Monte Carlo. The goal is not to build a standalone rates desk model, but to show how rate uncertainty bends equity path medians and tail bands.</p>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="control"><label for="rateModel">Rate process</label><select id="rateModel"><option value="vasicek">Vasicek</option><option value="cir">CIR</option></select></div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="rateChart"></div>
+        <div class="chart small" id="rateStockChart"></div>
+      </div>
+      <div class="edu">Educational note: Vasicek mean-reverts linearly and can dip below zero, which keeps the algebra clean. CIR scales diffusion with <code>sqrt(r_t)</code>, which better respects non-negative rates but can become sticky near zero.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>03. Dynamic Covariance Stress And Basket Simulation</h2>
+          <p class="lede">Static correlation is often the quietest assumption in a multi-asset Monte Carlo, but it can be the one that breaks first in stress. This experiment forces correlation to widen and twist through time, then compares the final basket distribution with a static-correlation baseline.</p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="corrStressChart"></div>
+        <div class="chart" id="basketChart"></div>
+      </div>
+      <div class="grid3" id="basketStats"></div>
+      <div class="tradeoff">Practical use case: basket options, portfolio VaR, spread books. Weakness: dynamic covariance stresses are scenario tools, not forecasts, so they are best interpreted as controlled experiments.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>04. Brownian Bridge For Barrier Accuracy</h2>
+          <p class="lede">Barrier options care about what happens between observation dates. Brownian Bridge adds conditional information between endpoints, which reduces missed barrier hits on coarse grids and often improves pricing accuracy more cheaply than brute-force sub-stepping.</p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="bridgePathChart"></div>
+        <div class="chart small" id="bridgeBarChart"></div>
+      </div>
+      <div class="edu">Mathematical intuition: once the endpoint of Brownian motion is known, the path between dates is no longer free-floating. The conditional bridge fills in the interior with the right midpoint mean and variance, which lets us estimate continuous-time barrier crossing probability between observed points.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>05. Adaptive Timestep Monte Carlo</h2>
+          <p class="lede">Fixed-step schemes waste effort during calm periods and under-resolve jumpy regimes. This adaptive experiment densifies time where shock magnitude or jump activity is elevated, then compares runtime and barrier-pricing error against fixed and high-resolution reference grids.</p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="adaptiveRuntimeChart"></div>
+        <div class="chart small" id="adaptiveScheduleChart"></div>
+      </div>
+      <div class="tradeoff">Tradeoff: adaptive stepping usually buys local accuracy, but bookkeeping complexity rises fast and pathwise Greeks become harder to reason about.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>06. Importance Sampling For Rare Events</h2>
+          <p class="lede">Rare-event payoffs are where naive Monte Carlo feels slowest. Importance Sampling deliberately shifts the sampling distribution toward the tail event and corrects the bias with likelihood weights, so the estimator spends more time seeing what matters.</p>
+        </div>
+      </div>
+      <div class="grid2">
+        <div class="chart" id="importanceChart"></div>
+        <div class="stats" id="importanceStats"></div>
+      </div>
+      <div class="edu">Derivation intuition: if you sample under a tilted density <code>q</code> instead of the original density <code>p</code>, the unbiased estimator becomes <code>payoff * p/q</code>. The art is choosing a tilt that increases rare-event hits without exploding weight variance.</div>
+    </section>
+  </div>
+  <script>
+    const payload = {payload};
+    const theme = {{
+      paper_bgcolor: "{C["bg"]}",
+      plot_bgcolor: "{C["bg"]}",
+      font: {{family: "Consolas, Menlo, monospace", color: "{C["text"]}", size: 11}},
+      margin: {{l: 54, r: 24, t: 48, b: 60}},
+      legend: {{
+        bgcolor: "rgba(22,27,34,0.8)", 
+        bordercolor: "{C["border"]}", 
+        borderwidth: 1,
+        orientation: "v",
+        yanchor: "top",
+        y: 0.98,
+        xanchor: "right",
+        x: 0.98
+      }},
+      hoverlabel: {{bgcolor: "#ffffff", font: {{color: "#111111"}}}},
+    }};
+
+    function fmt(x, digits=3) {{
+      return Number(x).toFixed(digits);
+    }}
+
+    function nearestScenario() {{
+      const models = payload.jump_scenarios.filter(s => s.model === document.getElementById("jumpModel").value);
+      
+      // Get slider values directly
+      const lam = parseFloat(document.getElementById("jumpLambda").value);
+      const jmu = parseFloat(document.getElementById("jumpMean").value);
+      const jvol = parseFloat(document.getElementById("jumpVol").value);
+      
+      document.getElementById("jumpLambdaVal").textContent = fmt(lam, 2);
+      document.getElementById("jumpMeanVal").textContent = fmt(jmu, 3);
+      document.getElementById("jumpVolVal").textContent = fmt(jvol, 3);
+      
+      // Find closest scenario or use first
+      let closest = models[0];
+      let minDist = Infinity;
+      
+      for (const s of models) {{
+        const dist = Math.abs(s.lambda - lam) + Math.abs(s.jump_mean - jmu) + Math.abs(s.jump_vol - jvol);
+        if (dist < minDist) {{
+          minDist = dist;
+          closest = s;
+        }}
+      }}
+      
+      return closest;
+    }}
+
+    function renderJump() {{
+      const sc = nearestScenario();
+      const traces = sc.paths.map((path, idx) => ({{
+        x: sc.time,
+        y: path,
+        mode: "lines",
+        type: "scatter",
+        name: `Path ${{idx + 1}}`,
+        line: {{width: 2}},
+      }}));
+      sc.jump_points.forEach((pts, idx) => {{
+        traces.push({{
+          x: pts.x,
+          y: pts.y,
+          mode: "markers",
+          type: "scatter",
+          name: `Jumps on path ${{idx + 1}}`,
+          marker: {{size: 8, color: "{C["red"]}", symbol: "diamond"}},
+        }});
+      }});
+      Plotly.react("jumpPaths", traces, {{
+        ...theme,
+        title: {{text: `Jump paths | ${{sc.model}}`, x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years", fixedrange: false}},
+        yaxis: {{title: "Price", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      document.getElementById("jumpStats").innerHTML = `
+        <div class="stat"><b>Terminal mean</b>$${{fmt(sc.terminal_summary.mean, 2)}}</div>
+        <div class="stat"><b>Terminal dispersion</b>$${{fmt(sc.terminal_summary.std, 2)}}</div>
+        <div class="stat"><b>5th / 95th percentile</b>$${{fmt(sc.terminal_summary.p05, 2)}} / $${{fmt(sc.terminal_summary.p95, 2)}}</div>
+        <div class="stat"><b>Expected jumps per year</b>${{fmt(sc.jump_frequency, 2)}}</div>
+        <div class="stat"><b>Mean jump count per path</b>${{fmt(sc.mean_jumps_per_path, 2)}}</div>
+        <div class="stat"><b>Interpretation</b>${{sc.jump_mean < 0 ? "Left-tail shock bias" : sc.jump_mean > 0 ? "Upside gap bias" : "Symmetric jump center"}}</div>`;
+    }}
+
+    function renderRates() {{
+      const model = document.getElementById("rateModel").value;
+      const rp = payload.rate_processes[model];
+      Plotly.react("rateChart", [
+        {{x: rp.time, y: rp.rate_p10, mode: "lines", line: {{width: 0}}, showlegend: false, hoverinfo: "skip"}},
+        {{x: rp.time, y: rp.rate_p90, mode: "lines", fill: "tonexty", fillcolor: "rgba(57,197,207,0.16)", line: {{width: 0}}, name: "10-90% band"}},
+        {{x: rp.time, y: rp.rate_p50, mode: "lines", name: `${{model.toUpperCase()}} median`, line: {{color: "{C["cyan"]}", width: 2.5}}}},
+      ], {{
+        ...theme,
+        title: {{text: `Rate input process | ${{model.toUpperCase()}}`, x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years", fixedrange: false}},
+        yaxis: {{title: "Short rate", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      Plotly.react("rateStockChart", [
+        {{x: rp.time, y: rp.stock_p10, mode: "lines", line: {{width: 0}}, showlegend: false, hoverinfo: "skip"}},
+        {{x: rp.time, y: rp.stock_p90, mode: "lines", fill: "tonexty", fillcolor: "rgba(88,166,255,0.15)", line: {{width: 0}}, name: "10-90% price band"}},
+        {{x: rp.time, y: rp.stock_p50, mode: "lines", name: "Median stock path", line: {{color: "{C["blue"]}", width: 2.5}}}},
+      ], {{
+        ...theme,
+        title: {{text: "Stock path under stochastic rates", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years", fixedrange: false}},
+        yaxis: {{title: "Price", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+    }}
+
+    function renderDynamicCov() {{
+      const dc = payload.dynamic_covariance;
+      Plotly.react("corrStressChart", [
+        {{x: dc.time.slice(1), y: dc.corr_12, mode: "lines", name: "rho(1,2)", line: {{color: "{C["blue"]}"}}}},
+        {{x: dc.time.slice(1), y: dc.corr_13, mode: "lines", name: "rho(1,3)", line: {{color: "{C["amber"]}"}}}},
+        {{x: dc.time.slice(1), y: dc.corr_23, mode: "lines", name: "rho(2,3)", line: {{color: "{C["pink"]}"}}}},
+        {{x: dc.time.slice(1), y: dc.stress_curve, mode: "lines", name: "Stress driver", yaxis: "y2", line: {{color: "{C["red"]}", dash: "dot"}}}},
+      ], {{
+        ...theme,
+        title: {{text: "Time-varying dependence stress", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years", fixedrange: false}},
+        yaxis: {{title: "Correlation", fixedrange: false, range: [-1.1, 1.1]}},
+        yaxis2: {{overlaying: "y", side: "right", title: "Stress scalar", fixedrange: false}},
+        autosize: true,
+        margin: {{l: 60, r: 60, t: 50, b: 60}},
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      Plotly.react("basketChart", [
+        {{x: dc.basket_static_samples, type: "histogram", opacity: 0.58, name: "Static basket", marker: {{color: "{C["blue"]}"}}}},
+        {{x: dc.basket_dynamic_samples, type: "histogram", opacity: 0.58, name: "Dynamic basket", marker: {{color: "{C["red"]}"}}}},
+      ], {{
+        ...theme,
+        barmode: "overlay",
+        title: {{text: "Final basket distribution", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Basket final value", fixedrange: false}},
+        yaxis: {{title: "Frequency", fixedrange: false}},
+        autosize: true,
+        margin: {{l: 60, r: 40, t: 50, b: 60}},
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      const bs = document.getElementById("basketStats");
+      bs.innerHTML = `
+        <div class="stat"><b>Static mean</b>$${{fmt(dc.basket_static.mean, 2)}}</div>
+        <div class="stat"><b>Dynamic mean</b>$${{fmt(dc.basket_dynamic.mean, 2)}}</div>
+        <div class="stat"><b>Static 95th</b>$${{fmt(dc.basket_static.p95, 2)}}</div>
+        <div class="stat"><b>Dynamic 95th</b>$${{fmt(dc.basket_dynamic.p95, 2)}}</div>
+        <div class="stat"><b>Static 5th</b>$${{fmt(dc.basket_static.p05, 2)}}</div>
+        <div class="stat"><b>Dynamic 5th</b>$${{fmt(dc.basket_dynamic.p05, 2)}}</div>`;
+    }}
+
+    function renderBridge() {{
+      const bb = payload.brownian_bridge;
+      Plotly.react("bridgePathChart", [
+        {{x: bb.time, y: bb.standard_path, mode: "lines", name: "Standard path", line: {{color: "{C["blue"]}", width: 2}}}},
+        {{x: bb.time, y: bb.bridge_path, mode: "lines", name: "Bridge path", line: {{color: "{C["amber"]}", width: 2}}}},
+        {{x: bb.time, y: bb.time.map(() => bb.barrier), mode: "lines", name: "Barrier", line: {{color: "{C["red"]}", dash: "dash"}}}},
+      ], {{
+        ...theme,
+        title: {{text: "Endpoint-matched path construction", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years", fixedrange: false}},
+        yaxis: {{title: "Price", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      Plotly.react("bridgeBarChart", [
+        {{x: ["Discrete barrier MC", "Bridge-corrected MC"], y: [bb.discrete_price, bb.bridge_price], type: "bar", marker: {{color: ["{C["blue"]}", "{C["amber"]}"]}}}},
+        {{x: ["Discrete active", "Bridge survival"], y: [bb.discrete_active_ratio, bb.bridge_active_ratio], type: "bar", xaxis: "x2", yaxis: "y2", marker: {{color: ["{C["blue"]}", "{C["amber"]}"]}}}},
+      ], {{
+        ...theme,
+        grid: {{rows: 1, columns: 2, pattern: "independent"}},
+        title: {{text: "Barrier price and survival comparison", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+    }}
+
+    function renderAdaptive() {{
+      const ad = payload.adaptive_timestep;
+      Plotly.react("adaptiveRuntimeChart", [
+        {{x: ["Fixed", "Adaptive", "Reference"], y: [ad.fixed.runtime_ms, ad.adaptive.runtime_ms, ad.reference.runtime_ms], type: "bar", name: "Runtime (ms)", marker: {{color: ["{C["blue"]}", "{C["amber"]}", "{C["green"]}"]}}}},
+        {{x: ["Fixed", "Adaptive"], y: [ad.fixed.abs_error_vs_ref, ad.adaptive.abs_error_vs_ref], type: "bar", xaxis: "x2", yaxis: "y2", name: "Abs error vs ref", marker: {{color: ["{C["blue"]}", "{C["amber"]}"]}}}},
+      ], {{
+        ...theme,
+        grid: {{rows: 1, columns: 2, pattern: "independent"}},
+        title: {{text: "Runtime versus barrier-pricing accuracy", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      Plotly.react("adaptiveScheduleChart", [
+        {{x: ad.sample_step_schedule.map((_, i) => i + 1), y: ad.sample_step_schedule, type: "bar", name: "Adaptive substeps", marker: {{color: "{C["amber"]}"}}}},
+        {{x: ad.sample_jump_counts.map((_, i) => i + 1), y: ad.sample_jump_counts, mode: "lines+markers", yaxis: "y2", name: "Jump count", line: {{color: "{C["red"]}"}}}},
+      ], {{
+        ...theme,
+        title: {{text: "Where the adaptive grid densifies", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Day", fixedrange: false}},
+        yaxis: {{title: "Substeps", fixedrange: false}},
+        yaxis2: {{overlaying: "y", side: "right", title: "Jump count", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+    }}
+
+    function renderImportance() {{
+      const imp = payload.importance_sampling;
+      Plotly.react("importanceChart", [
+        {{x: imp.running_standard.map((_, i) => i + 1), y: imp.running_standard, mode: "lines", name: "Standard MC", line: {{color: "{C["blue"]}", width: 2}}}},
+        {{x: imp.running_is.map((_, i) => i + 1), y: imp.running_is, mode: "lines", name: "Importance sampling", line: {{color: "{C["green"]}", width: 2}}}},
+      ], {{
+        ...theme,
+        title: {{text: "Running rare-event price estimate", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Samples", fixedrange: false}},
+        yaxis: {{title: "Discounted payoff estimate", fixedrange: false}},
+        autosize: true,
+      }}, {{displayModeBar: true, responsive: true, scrollZoom: true}});
+      document.getElementById("importanceStats").innerHTML = `
+        <div class="stat"><b>Deep OTM strike</b>$${{fmt(imp.strike, 2)}}</div>
+        <div class="stat"><b>Tilt theta</b>${{fmt(imp.theta, 2)}}</div>
+        <div class="stat"><b>Standard price ± SE</b>$${{fmt(imp.standard_price, 4)}} ± ${{fmt(imp.standard_stderr, 4)}}</div>
+        <div class="stat"><b>IS price ± SE</b>$${{fmt(imp.is_price, 4)}} ± ${{fmt(imp.is_stderr, 4)}}</div>
+        <div class="stat"><b>Variance ratio (IS / standard)</b>${{fmt(imp.variance_ratio, 3)}}</div>
+        <div class="stat"><b>Rare payoff hit ratio</b>${{fmt(imp.standard_hit_ratio * 100, 2)}}% vs ${{fmt(imp.is_hit_ratio * 100, 2)}}%</div>
+        <div class="stat"><b>Effective sample size</b>${{fmt(imp.effective_sample_size, 0)}}</div>`;
+    }}
+
+    ["jumpModel", "jumpLambda", "jumpMean", "jumpVol"].forEach(id => document.getElementById(id).addEventListener("input", renderJump));
+    document.getElementById("rateModel").addEventListener("input", renderRates);
+    renderJump();
+    renderRates();
+    renderDynamicCov();
+    renderBridge();
+    renderAdaptive();
+    renderImportance();
+  </script>
+</body>
+</html>"""
+        path_out = OUT / f"mc_advanced_extensions_{self.eng.ticker}.html"
+        path_out.write_text(html_doc, encoding="utf-8")
+        rlog(f"  [green]OK[/green] advanced extensions -> [cyan]{path_out}[/cyan]")
+        return path_out
+
+    def render_diagnostics_failure_lab(self, diag: dict, show=False):
+        payload = json.dumps(diag)
+        html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monte Carlo Diagnostics And Failure Analysis - {self.eng.ticker}</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {{
+      --bg: {C["bg"]}; --bg2: {C["bg2"]}; --bg3: {C["bg3"]}; --border: {C["border"]};
+      --muted: {C["muted"]}; --text: {C["text"]}; --title: {C["title"]};
+      --blue: {C["blue"]}; --green: {C["green"]}; --red: {C["red"]}; --amber: {C["amber"]}; --cyan: {C["cyan"]};
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0; color: var(--text); font-family: Consolas, Menlo, monospace;
+      background:
+        radial-gradient(circle at 12% 0%, rgba(88,166,255,0.12), transparent 26%),
+        radial-gradient(circle at 88% 0%, rgba(248,81,73,0.10), transparent 24%),
+        linear-gradient(180deg, #0f141d 0%, var(--bg) 100%);
+    }}
+    .page {{ max-width: 1400px; margin: 0 auto; padding: 28px 20px 42px; }}
+    .hero, .section {{
+      border: 1px solid var(--border); border-radius: 22px; background: rgba(22,27,34,0.94);
+      box-shadow: 0 18px 52px rgba(0,0,0,0.16);
+    }}
+    .hero {{ padding: 24px; margin-bottom: 16px; }}
+    .hero h1, .section h2 {{ margin: 0 0 8px; color: var(--title); }}
+    .lede, .edu, .note {{ color: var(--muted); line-height: 1.56; font-size: 13px; }}
+    .meta, .stats, .controls {{ display: grid; gap: 12px; }}
+    .meta {{ grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 16px; }}
+    .pill, .stat, .control {{
+      background: rgba(13,17,23,0.78); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px;
+    }}
+    .pill b, .stat b {{ display: block; margin-bottom: 4px; color: var(--title); }}
+    .section {{ padding: 20px; margin-top: 16px; }}
+    .section-head {{ display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }}
+    .controls {{ grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 14px; }}
+    .control label {{ display: block; margin-bottom: 8px; color: var(--title); font-size: 12px; }}
+    select {{ width: 100%; border: 1px solid var(--border); border-radius: 10px; background: var(--bg3); color: var(--text); padding: 10px; font-family: inherit; }}
+    .grid2 {{ display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 16px; }}
+    .grid3 {{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }}
+    .chart {{ border: 1px solid var(--border); border-radius: 16px; background: rgba(13,17,23,0.74); padding: 8px; min-height: 380px; }}
+    .chart.tall {{ min-height: 460px; }}
+    .edu {{ border-left: 3px solid var(--cyan); padding-left: 12px; margin-top: 10px; }}
+    @media (max-width: 980px) {{ .grid2, .grid3 {{ grid-template-columns: 1fr; }} }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="lede">Numerical Experimentation Platform</div>
+      <h1>Monte Carlo Diagnostics & Failure Analysis Lab</h1>
+      <p class="lede">This lab treats the simulator as a scientific instrument. Instead of asking only for a price, it asks when the estimator is biased, when it is noisy, when discretization is misleading, and which parameter regimes make the simulation fragile or computationally wasteful.</p>
+      <div class="meta">
+        <div class="pill"><b>Ticker</b>{self.eng.ticker}</div>
+        <div class="pill"><b>Base drift</b>{self.eng.mu:+.2%}</div>
+        <div class="pill"><b>Base volatility</b>{self.eng.sigma:.2%}</div>
+        <div class="pill"><b>Focus</b>failure modes, convergence, instability</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>01. Convergence Heatmaps</h2><p class="lede">Pricing error is mapped against path count, timestep count, volatility regime, and maturity. This makes it easier to see when Monte Carlo is genuinely under-sampled versus when error is mostly regime-driven.</p></div></div>
+      <div class="controls">
+        <div class="control"><label for="convScenario">Volatility / maturity scenario</label><select id="convScenario"></select></div>
+      </div>
+      <div class="grid2">
+        <div class="chart tall" id="convHeatmap"></div>
+        <div class="chart tall" id="convSeHeatmap"></div>
+      </div>
+      <div class="edu">Educational cue: for plain European options under exact GBM terminal sampling, timestep sensitivity should stay modest relative to sample-count sensitivity. If the heatmap says otherwise, that is usually a modeling or implementation clue.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>02. Estimator Bias And Sampling Drift</h2><p class="lede">Repeated independent Monte Carlo runs are compared with the Black-Scholes benchmark so you can see bias, running drift, and finite-sample wobble rather than just a single point estimate.</p></div></div>
+      <div class="grid2">
+        <div class="chart" id="biasRunChart"></div>
+        <div class="stats" id="biasStats"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>03. Discretization Error Analysis</h2><p class="lede">Identical Brownian shocks are reused across multiple monitoring resolutions, then compared through barrier and Asian pricing divergence, path RMSE, and maximum path deviation against the finest reference grid.</p></div></div>
+      <div class="grid2">
+        <div class="chart" id="discPriceChart"></div>
+        <div class="chart" id="discErrorChart"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>04. Variance Decomposition Dashboard</h2><p class="lede">Uncertainty is decomposed into volatility specification, timestep choice, random sampling noise, jump-event regime changes, and payoff nonlinearity so the user can see where estimator instability is actually coming from.</p></div></div>
+      <div class="grid2">
+        <div class="chart" id="varShareChart"></div>
+        <div class="chart" id="varRawChart"></div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>05. Simulation Failure Region Maps</h2><p class="lede">These maps highlight the regimes where Monte Carlo becomes misleading, unstable, excessively noisy, or inefficient, especially for deep OTM options, high volatility, barrier fragility, long maturities, and small sample sizes.</p></div></div>
+      <div class="grid3">
+        <div class="chart" id="failOtmChart"></div>
+        <div class="chart" id="failBarrierChart"></div>
+        <div class="chart" id="failIneffChart"></div>
+      </div>
+      <div class="note">Higher score means more diagnostic concern. These are stress diagnostics, not probabilities of real-world failure.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><div><h2>06. Path Instability Visuals</h2><p class="lede">Small perturbations in random seed or volatility assumptions can produce outsized payoff changes. The visual goal here is to show propagation, not just summary statistics.</p></div></div>
+      <div class="grid2">
+        <div class="chart tall" id="instabilityPathChart"></div>
+        <div class="chart" id="instabilityPayoffChart"></div>
+      </div>
+      <div class="stats" id="instabilityStats" style="margin-top:12px;"></div>
+    </section>
+  </div>
+  <script>
+    const payload = {payload};
+    const theme = {{
+      paper_bgcolor: "{C["bg"]}", plot_bgcolor: "{C["bg"]}",
+      font: {{family: "Consolas, Menlo, monospace", color: "{C["text"]}", size: 11}},
+      margin: {{l: 58, r: 24, t: 48, b: 48}},
+      legend: {{bgcolor: "rgba(22,27,34,0.82)", bordercolor: "{C["border"]}", borderwidth: 1}}
+    }};
+    const fmt = (x, d=3) => Number(x).toFixed(d);
+    const conv = payload.convergence_heatmaps;
+    const bias = payload.bias_analysis;
+    const disc = payload.discretization;
+    const vdec = payload.variance_decomposition;
+    const fail = payload.failure_regions;
+    const inst = payload.path_instability;
+
+    function setupConvergenceSelect() {{
+      const sel = document.getElementById("convScenario");
+      conv.scenarios.forEach((sc, idx) => {{
+        const opt = document.createElement("option");
+        opt.value = idx;
+        opt.textContent = `vol x${{fmt(sc.vol_mult, 2)}} | maturity ${{sc.maturity}}d`;
+        sel.appendChild(opt);
+      }});
+      sel.addEventListener("input", renderConvergence);
+    }}
+
+    function renderConvergence() {{
+      const sc = conv.scenarios[Number(document.getElementById("convScenario").value || 0)];
+      Plotly.react("convHeatmap", [{{
+        type: "heatmap", z: sc.errors, x: conv.step_grid, y: conv.path_grid,
+        colorscale: "RdBu", zmid: 0, colorbar: {{title: "Price error"}},
+        hovertemplate: "paths=%{{y}}<br>steps=%{{x}}<br>error=%{{z:.4f}}<extra></extra>"
+      }}], {{
+        ...theme, title: {{text: `Pricing error vs Black-Scholes | benchmark=${{fmt(sc.bs, 4)}}`, x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Timestep count"}}, yaxis: {{title: "Path count"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("convSeHeatmap", [{{
+        type: "heatmap", z: sc.stderrs, x: conv.step_grid, y: conv.path_grid,
+        colorscale: "Viridis", colorbar: {{title: "MCSE"}},
+        hovertemplate: "paths=%{{y}}<br>steps=%{{x}}<br>MCSE=%{{z:.4f}}<extra></extra>"
+      }}], {{
+        ...theme, title: {{text: "Estimator standard error surface", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Timestep count"}}, yaxis: {{title: "Path count"}}
+      }}, {{displayModeBar: false, responsive: true}});
+    }}
+
+    function renderBias() {{
+      const traces = [];
+      bias.profiles.forEach((p, idx) => {{
+        traces.push({{x: p.estimates.map((_, i) => i + 1), y: p.running_mean, mode: "lines+markers", name: `running mean | N=${{p.num_sim}}`, line: {{width: 2}}}});
+      }});
+      traces.push({{x: [1, bias.profiles[0].estimates.length], y: [bias.bs, bias.bs], mode: "lines", name: "Black-Scholes", line: {{color: "{C["amber"]}", dash: "dash"}}}});
+      Plotly.react("biasRunChart", traces, {{
+        ...theme, title: {{text: "Repeated-run convergence drift", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Independent run index"}}, yaxis: {{title: "Call price estimate"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      document.getElementById("biasStats").innerHTML = bias.profiles.map(p => `
+        <div class="stat"><b>N=${{p.num_sim}}</b>mean bias=${{fmt(p.mean_bias, 4)}} | RMSE=${{fmt(p.rmse, 4)}} | run sigma=${{fmt(p.std_estimate, 4)}}</div>
+      `).join("");
+    }}
+
+    function renderDiscretization() {{
+      Plotly.react("discPriceChart", [
+        {{x: disc.rows.map(r => r.steps), y: disc.rows.map(r => r.barrier_price), mode: "lines+markers", name: "Barrier price", line: {{color: "{C["red"]}", width: 2}}}},
+        {{x: disc.rows.map(r => r.steps), y: disc.rows.map(r => r.asian_price), mode: "lines+markers", name: "Asian price", line: {{color: "{C["blue"]}", width: 2}}}},
+      ], {{
+        ...theme, title: {{text: `Price by monitoring resolution | barrier=${{fmt(disc.barrier, 2)}}`, x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Timestep count"}}, yaxis: {{title: "Price"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("discErrorChart", [
+        {{x: disc.rows.map(r => r.steps), y: disc.rows.map(r => r.barrier_divergence), type: "bar", name: "Barrier divergence", marker: {{color: "{C["red"]}"}}}},
+        {{x: disc.rows.map(r => r.steps), y: disc.rows.map(r => r.path_rmse), type: "bar", name: "Path RMSE", marker: {{color: "{C["cyan"]}"}}, xaxis: "x2", yaxis: "y2"}},
+      ], {{
+        ...theme, grid: {{rows: 1, columns: 2, pattern: "independent"}},
+        title: {{text: "Discretization divergence and path instability", x: 0.02, font: {{color: "{C["title"]}"}}}}
+      }}, {{displayModeBar: false, responsive: true}});
+    }}
+
+    function renderVariance() {{
+      Plotly.react("varShareChart", [{{
+        x: Object.keys(vdec.shares), y: Object.values(vdec.shares), type: "bar",
+        marker: {{color: ["{C["blue"]}","{C["cyan"]}","{C["green"]}","{C["red"]}","{C["amber"]}"]}},
+        text: Object.values(vdec.shares).map(v => `${{fmt(v,1)}}%`), textposition: "outside"
+      }}], {{
+        ...theme, title: {{text: "Normalized uncertainty contribution", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Source"}}, yaxis: {{title: "Share of total variation (%)"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("varRawChart", [{{
+        labels: Object.keys(vdec.raw), values: Object.values(vdec.raw), type: "pie", hole: 0.42,
+        marker: {{colors: ["{C["blue"]}","{C["cyan"]}","{C["green"]}","{C["red"]}","{C["amber"]}"]}}
+      }}], {{
+        ...theme, title: {{text: "Raw variance proxy magnitudes", x: 0.02, font: {{color: "{C["title"]}"}}}}
+      }}, {{displayModeBar: false, responsive: true}});
+    }}
+
+    function renderFailure() {{
+      Plotly.react("failOtmChart", [{{
+        type: "heatmap", z: fail.otm_vol_score, x: fail.strike_mults, y: fail.sigma_grid, colorscale: "YlOrRd",
+        hovertemplate: "strike x=%{{x}}<br>sigma=%{{y}}<br>risk score=%{{z:.1f}}<extra></extra>"
+      }}], {{
+        ...theme, title: {{text: "Deep OTM / volatility fragility", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Strike / S0"}}, yaxis: {{title: "Volatility"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("failBarrierChart", [{{
+        type: "heatmap", z: fail.barrier_score, x: fail.path_grid, y: fail.barrier_offsets, colorscale: "YlOrRd",
+        hovertemplate: "paths=%{{x}}<br>barrier x=%{{y}}<br>risk score=%{{z:.1f}}<extra></extra>"
+      }}], {{
+        ...theme, title: {{text: "Barrier proximity / sample-size fragility", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Path count"}}, yaxis: {{title: "Barrier / S0"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("failIneffChart", [{{
+        type: "heatmap", z: fail.inefficiency_score, x: fail.path_grid, y: fail.maturity_grid, colorscale: "YlOrRd",
+        hovertemplate: "paths=%{{x}}<br>maturity=%{{y}}d<br>inefficiency=%{{z:.1f}}<extra></extra>"
+      }}], {{
+        ...theme, title: {{text: "Long maturity / low-N inefficiency", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Path count"}}, yaxis: {{title: "Maturity (days)"}}
+      }}, {{displayModeBar: false, responsive: true}});
+    }}
+
+    function renderInstability() {{
+      const traces = [];
+      inst.base_paths.forEach((p, idx) => {{
+        traces.push({{x: inst.time, y: p, mode: "lines", name: `base ${{idx+1}}`, line: {{color: "{C["blue"]}", width: 1.7}}}});
+        traces.push({{x: inst.time, y: inst.sigma_paths[idx], mode: "lines", name: `sigma+1% ${{idx+1}}`, line: {{color: "{C["amber"]}", width: 1.4, dash: "dot"}}}});
+      }});
+      Plotly.react("instabilityPathChart", traces, {{
+        ...theme, title: {{text: "Path response to tiny sigma perturbation", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Years"}}, yaxis: {{title: "Price"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      Plotly.react("instabilityPayoffChart", [
+        {{x: inst.payoff_delta_sigma, type: "histogram", opacity: 0.56, name: "Payoff delta | sigma +1%", marker: {{color: "{C["amber"]}"}}}},
+        {{x: inst.payoff_delta_seed, type: "histogram", opacity: 0.56, name: "Payoff delta | seed shift", marker: {{color: "{C["blue"]}"}}}},
+      ], {{
+        ...theme, barmode: "overlay",
+        title: {{text: "Payoff instability distribution", x: 0.02, font: {{color: "{C["title"]}"}}}},
+        xaxis: {{title: "Payoff difference"}}, yaxis: {{title: "Frequency"}}
+      }}, {{displayModeBar: false, responsive: true}});
+      document.getElementById("instabilityStats").innerHTML = `
+        <div class="stat"><b>Mean abs payoff shift | sigma +1%</b>${{fmt(inst.mean_abs_sigma_shift, 4)}}</div>
+        <div class="stat"><b>Mean abs payoff shift | seed change</b>${{fmt(inst.mean_abs_seed_shift, 4)}}</div>
+        <div class="stat"><b>Amplification mean</b>${{fmt(inst.amplification_mean, 4)}}</div>
+        <div class="stat"><b>Amplification 95th percentile</b>${{fmt(inst.amplification_p95, 4)}}</div>`;
+    }}
+
+    setupConvergenceSelect();
+    renderConvergence();
+    renderBias();
+    renderDiscretization();
+    renderVariance();
+    renderFailure();
+    renderInstability();
+  </script>
+</body>
+</html>"""
+        path_out = OUT / f"mc_diagnostics_failure_lab_{self.eng.ticker}.html"
+        path_out.write_text(html_doc, encoding="utf-8")
+        rlog(f"  [green]OK[/green] diagnostics failure lab -> [cyan]{path_out}[/cyan]")
+        return path_out
+
+    def render_pathwise_intuition_engine(self, show=False):
+        """
+        Pathwise Intuition Engine - Visual learning system for stochastic processes
+        Transforms abstract stochastic calculus into visual computational intuition
+        """
+        rlog("  [cyan]Building Pathwise Intuition Engine...[/cyan]")
+        
+        # Generate all visualization data
+        T = 1.0
+        N = 252
+        
+        # ============================================================
+        # GRAPH 1: Drift vs Diffusion Decomposition
+        # ============================================================
+        drift_diff_data = self._generate_drift_diffusion_decomposition(T, N)
+        fig1 = self._plot_drift_diffusion(drift_diff_data)
+        
+        # ============================================================
+        # GRAPH 2: Itô Correction Demonstration
+        # ============================================================
+        ito_data = self._generate_ito_correction_demo(T, N)
+        fig2 = self._plot_ito_correction(ito_data)
+        
+        # ============================================================
+        # GRAPH 3: Uncertainty Cone Expansion
+        # ============================================================
+        cone_data = self._generate_uncertainty_cone(T, N)
+        fig3 = self._plot_uncertainty_cone(cone_data)
+        
+        # ============================================================
+        # GRAPH 4: Measure Change (Real-World vs Risk-Neutral)
+        # ============================================================
+        measure_data = self._generate_measure_change_demo(T, N)
+        fig4 = self._plot_measure_change(measure_data)
+        
+        # ============================================================
+        # GRAPH 5: Sampling Geometry (Pseudo vs Sobol)
+        # ============================================================
+        sampling_data = self._generate_sampling_geometry()
+        fig5 = self._plot_sampling_geometry(sampling_data)
+        
+        # Combine all figures into a single HTML file
+        return self._save_pathwise_intuition_html([fig1, fig2, fig3, fig4, fig5])
+    
+    # ============================================================
+    # GRAPH 1 DATA GENERATOR: Drift vs Diffusion Decomposition
+    # Shows: Pure drift, pure diffusion, and combined GBM paths
+    # ============================================================
+    def _generate_drift_diffusion_decomposition(self, T: float, N: int) -> dict:
+        """Separate drift and diffusion contributions"""
+        dt = T / N
+        t = np.linspace(0, T, N + 1)
+        num_paths = 5
+        
+        rng = np.random.default_rng(42)
+        Z = rng.standard_normal((num_paths, N))
+        
+        # Pure drift (deterministic exponential growth)
+        drift_only = self.eng.S0 * np.exp(self.eng.mu * t)
+        
+        # Pure diffusion (stochastic, no drift)
+        diffusion_paths = []
+        for i in range(num_paths):
+            log_diff = -0.5 * self.eng.sigma**2 * t[1:] + self.eng.sigma * np.sqrt(dt) * np.cumsum(Z[i])
+            path = self.eng.S0 * np.exp(np.concatenate([[0], log_diff]))
+            diffusion_paths.append(path.tolist())
+        
+        # Combined GBM (drift + diffusion)
+        combined_paths = []
+        for i in range(num_paths):
+            log_ret = (self.eng.mu - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * Z[i]
+            path = self.eng.S0 * np.exp(np.concatenate([[0], np.cumsum(log_ret)]))
+            combined_paths.append(path.tolist())
+        
+        return {
+            "time": t.tolist(),
+            "drift_only": drift_only.tolist(),
+            "diffusion_paths": diffusion_paths,
+            "combined_paths": combined_paths,
+        }
+    
+    # ============================================================
+    # GRAPH 2 DATA GENERATOR: Itô Correction Demonstration
+    # Shows: ABM vs GBM with/without -½σ² correction term
+    # ============================================================
+    def _generate_ito_correction_demo(self, T: float, N: int) -> dict:
+        """Demonstrate why -0.5*σ² correction appears"""
+        dt = T / N
+        t = np.linspace(0, T, N + 1)
+        rng = np.random.default_rng(123)
+        Z = rng.standard_normal(N)
+        W = np.concatenate([[0], np.cumsum(Z * np.sqrt(dt))])
+        
+        # Arithmetic Brownian Motion (linear drift + noise)
+        abm = self.eng.S0 + self.eng.mu * self.eng.S0 * t + self.eng.sigma * self.eng.S0 * W
+        
+        # GBM without Itô correction (biased upward)
+        gbm_no_corr = self.eng.S0 * np.exp(self.eng.mu * t + self.eng.sigma * W)
+        
+        # GBM with correct -½σ² term (unbiased)
+        gbm_correct = self.eng.S0 * np.exp((self.eng.mu - 0.5 * self.eng.sigma**2) * t + self.eng.sigma * W)
+        
+        # Expected values for comparison
+        E_abm = self.eng.S0 + self.eng.mu * self.eng.S0 * t
+        E_gbm = self.eng.S0 * np.exp(self.eng.mu * t)
+        
+        return {
+            "time": t.tolist(),
+            "abm": abm.tolist(),
+            "gbm_no_correction": gbm_no_corr.tolist(),
+            "gbm_correct": gbm_correct.tolist(),
+            "expected_abm": E_abm.tolist(),
+            "expected_gbm": E_gbm.tolist(),
+            "correction_term": float(-0.5 * self.eng.sigma**2),
+        }
+    
+    # ============================================================
+    # GRAPH 3 DATA GENERATOR: Uncertainty Cone Expansion
+    # Shows: How path uncertainty grows with √t (not linearly)
+    # ============================================================
+    def _generate_uncertainty_cone(self, T: float, N: int) -> dict:
+        """Visualize uncertainty cone expansion"""
+        dt = T / N
+        t = np.linspace(0, T, N + 1)
+        rng = np.random.default_rng(456)
+        Z = rng.standard_normal((100, N))
+        
+        # Generate 100 GBM paths
+        log_ret = (self.eng.mu - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * Z
+        paths = self.eng.S0 * np.exp(np.column_stack([np.zeros(100), np.cumsum(log_ret, axis=1)]))
+        
+        return {
+            "time": t.tolist(),
+            "sample_paths": paths[:10].tolist(),  # Show 10 sample paths
+            "p05": np.percentile(paths, 5, axis=0).tolist(),   # 5th percentile
+            "p50": np.percentile(paths, 50, axis=0).tolist(),  # Median
+            "p95": np.percentile(paths, 95, axis=0).tolist(),  # 95th percentile
+        }
+    
+    # ============================================================
+    # GRAPH 4 DATA GENERATOR: Measure Change (P vs Q)
+    # Shows: Real-world vs risk-neutral probability measures
+    # ============================================================
+    def _generate_measure_change_demo(self, T: float, N: int) -> dict:
+        """Compare real-world vs risk-neutral measure"""
+        dt = T / N
+        t = np.linspace(0, T, N + 1)
+        r = 0.05  # Risk-free rate
+        rng = np.random.default_rng(789)
+        Z = rng.standard_normal((20, N))
+        
+        # Real-world measure (P) - uses actual drift μ
+        log_ret_P = (self.eng.mu - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * Z
+        paths_P = self.eng.S0 * np.exp(np.column_stack([np.zeros(20), np.cumsum(log_ret_P, axis=1)]))
+        
+        # Risk-neutral measure (Q) - uses risk-free rate r instead of μ
+        log_ret_Q = (r - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * Z
+        paths_Q = self.eng.S0 * np.exp(np.column_stack([np.zeros(20), np.cumsum(log_ret_Q, axis=1)]))
+        
+        return {
+            "time": t.tolist(),
+            "paths_P": paths_P[:5].tolist(),  # Show 5 paths under P
+            "paths_Q": paths_Q[:5].tolist(),  # Show 5 paths under Q
+            "expected_P": (self.eng.S0 * np.exp(self.eng.mu * t)).tolist(),  # E^P[S(t)]
+            "expected_Q": (self.eng.S0 * np.exp(r * t)).tolist(),            # E^Q[S(t)]
+            "mu": float(self.eng.mu),
+            "r": r,
+        }
+    
+    # ============================================================
+    # GRAPH 5 DATA GENERATOR: Sampling Geometry
+    # Shows: Pseudo-random vs Sobol quasi-Monte Carlo sequences
+    # ============================================================
+    def _generate_sampling_geometry(self) -> dict:
+        """Compare pseudo-random vs Sobol sampling"""
+        n = 500
+        
+        # Pseudo-random sampling (standard random number generator)
+        rng = np.random.default_rng(111)
+        pseudo_2d = rng.random((n, 2))
+        
+        # Sobol quasi-Monte Carlo sampling (low-discrepancy sequence)
+        from scipy.stats import qmc
+        sobol = qmc.Sobol(d=2, scramble=True, seed=111)
+        sobol_2d = sobol.random(n)
+        
+        return {
+            "pseudo_x": pseudo_2d[:, 0].tolist(),
+            "pseudo_y": pseudo_2d[:, 1].tolist(),
+            "sobol_x": sobol_2d[:, 0].tolist(),
+            "sobol_y": sobol_2d[:, 1].tolist(),
+        }
+    
+    # ============================================================
+    # GRAPH 6 DATA GENERATOR: Pathwise Greeks Sensitivity
+    # Shows: How option Greeks change with spot price (placeholder)
+    # ============================================================
+    def _generate_pathwise_greeks_animation(self) -> dict:
+        """Pathwise Greek sensitivity animations"""
+        K = self.eng.S0
+        T = 0.5
+        r = 0.05
+        
+        # Vary spot price around current S0
+        S_range = np.linspace(self.eng.S0 * 0.7, self.eng.S0 * 1.3, 20)
+        deltas = []
+        for S in S_range:
+            # Approximate delta using finite difference
+            eps = 0.01
+            price_up = self.eng.black_scholes_price(K, T, r, "call")  # Would need to adjust S0
+            deltas.append(0.5)  # Placeholder - needs proper implementation
+        
+        return {
+            "spot_range": S_range.tolist(),
+            "delta_values": deltas,
+        }
+    
+    # ============================================================
+    # GRAPH 1 PLOTTER: Drift vs Diffusion Decomposition
+    # ============================================================
+    def _plot_drift_diffusion(self, data: dict):
+        """Create Plotly figure for drift vs diffusion decomposition"""
+        fig = go.Figure()
+        
+        # Pure drift line
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["drift_only"],
+            mode="lines", name="Pure Drift (Deterministic)",
+            line=dict(color=C["green"], width=3, dash="dash")
+        ))
+        
+        # Diffusion paths
+        for i, path in enumerate(data["diffusion_paths"]):
+            fig.add_trace(go.Scatter(
+                x=data["time"], y=path,
+                mode="lines", name=f"Diffusion Path {i+1}",
+                line=dict(color=C["blue"], width=1.5),
+                opacity=0.6
+            ))
+        
+        # Combined GBM paths
+        for i, path in enumerate(data["combined_paths"]):
+            fig.add_trace(go.Scatter(
+                x=data["time"], y=path,
+                mode="lines", name=f"GBM Path {i+1}",
+                line=dict(color=C["amber"], width=2)
+            ))
+        
+        fig.update_layout(
+            title=dict(text="01. Drift vs Diffusion Decomposition", x=0.02, font=dict(size=20, color=C["title"])),
+            xaxis=dict(title="Time (years)", gridcolor=C["border"]),
+            yaxis=dict(title="Price", gridcolor=C["border"]),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["bg"],
+            font=dict(family="Consolas, Menlo, monospace", color=C["text"], size=11),
+            legend=dict(bgcolor="rgba(22,27,34,0.8)", bordercolor=C["border"], borderwidth=1),
+            margin=dict(l=60, r=40, t=80, b=60),
+            height=500
+        )
+        
+        return fig
+    
+    # ============================================================
+    # GRAPH 2 PLOTTER: Itô Correction Demonstration
+    # ============================================================
+    def _plot_ito_correction(self, data: dict):
+        """Create Plotly figure for Itô correction demonstration"""
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["abm"],
+            mode="lines", name="Arithmetic BM (Wrong)",
+            line=dict(color=C["red"], width=2)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["gbm_no_correction"],
+            mode="lines", name="GBM without -½σ² (Biased)",
+            line=dict(color=C["pink"], width=2, dash="dot")
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["gbm_correct"],
+            mode="lines", name="GBM with -½σ² (Correct)",
+            line=dict(color=C["green"], width=3)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["expected_gbm"],
+            mode="lines", name="Expected Path E[S(t)]",
+            line=dict(color=C["cyan"], width=2, dash="dash")
+        ))
+        
+        fig.update_layout(
+            title=dict(text=f"02. Itô Correction: -½σ² = {data['correction_term']:.4f}", x=0.02, font=dict(size=20, color=C["title"])),
+            xaxis=dict(title="Time (years)", gridcolor=C["border"]),
+            yaxis=dict(title="Price", gridcolor=C["border"]),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["bg"],
+            font=dict(family="Consolas, Menlo, monospace", color=C["text"], size=11),
+            legend=dict(bgcolor="rgba(22,27,34,0.8)", bordercolor=C["border"], borderwidth=1),
+            margin=dict(l=60, r=40, t=80, b=60),
+            height=500
+        )
+        
+        return fig
+    
+    # ============================================================
+    # GRAPH 3 PLOTTER: Uncertainty Cone Expansion
+    # ============================================================
+    def _plot_uncertainty_cone(self, data: dict):
+        """Create Plotly figure for uncertainty cone visualization"""
+        fig = go.Figure()
+        
+        # Sample paths (faint)
+        for i, path in enumerate(data["sample_paths"]):
+            fig.add_trace(go.Scatter(
+                x=data["time"], y=path,
+                mode="lines", name=f"Sample {i+1}",
+                line=dict(color=C["muted"], width=1),
+                opacity=0.3,
+                showlegend=False
+            ))
+        
+        # Percentile bands
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["p95"],
+            mode="lines", name="95th percentile",
+            line=dict(color=C["red"], width=0),
+            showlegend=False
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["p05"],
+            mode="lines", name="5th-95th band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.15)",
+            line=dict(color=C["blue"], width=0)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["p50"],
+            mode="lines", name="Median",
+            line=dict(color=C["cyan"], width=3)
+        ))
+        
+        fig.update_layout(
+            title=dict(text="03. Uncertainty Cone: σ√t Scaling", x=0.02, font=dict(size=20, color=C["title"])),
+            xaxis=dict(title="Time (years)", gridcolor=C["border"]),
+            yaxis=dict(title="Price", gridcolor=C["border"]),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["bg"],
+            font=dict(family="Consolas, Menlo, monospace", color=C["text"], size=11),
+            legend=dict(bgcolor="rgba(22,27,34,0.8)", bordercolor=C["border"], borderwidth=1),
+            margin=dict(l=60, r=40, t=80, b=60),
+            height=500
+        )
+        
+        return fig
+    
+    # ============================================================
+    # GRAPH 4 PLOTTER: Measure Change (P vs Q)
+    # ============================================================
+    def _plot_measure_change(self, data: dict):
+        """Create Plotly figure for measure change demonstration"""
+        fig = go.Figure()
+        
+        # P-measure paths
+        for i, path in enumerate(data["paths_P"]):
+            fig.add_trace(go.Scatter(
+                x=data["time"], y=path,
+                mode="lines", name=f"P-measure {i+1}",
+                line=dict(color=C["blue"], width=1.5),
+                opacity=0.6
+            ))
+        
+        # Q-measure paths
+        for i, path in enumerate(data["paths_Q"]):
+            fig.add_trace(go.Scatter(
+                x=data["time"], y=path,
+                mode="lines", name=f"Q-measure {i+1}",
+                line=dict(color=C["amber"], width=1.5),
+                opacity=0.6
+            ))
+        
+        # Expected values
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["expected_P"],
+            mode="lines", name=f"E^P[S] (μ={data['mu']:.2f})",
+            line=dict(color=C["blue"], width=3, dash="dash")
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["time"], y=data["expected_Q"],
+            mode="lines", name=f"E^Q[S] (r={data['r']:.2f})",
+            line=dict(color=C["amber"], width=3, dash="dash")
+        ))
+        
+        fig.update_layout(
+            title=dict(text="04. Measure Change: P (Real-World) vs Q (Risk-Neutral)", x=0.02, font=dict(size=20, color=C["title"])),
+            xaxis=dict(title="Time (years)", gridcolor=C["border"]),
+            yaxis=dict(title="Price", gridcolor=C["border"]),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["bg"],
+            font=dict(family="Consolas, Menlo, monospace", color=C["text"], size=11),
+            legend=dict(bgcolor="rgba(22,27,34,0.8)", bordercolor=C["border"], borderwidth=1),
+            margin=dict(l=60, r=40, t=80, b=60),
+            height=500
+        )
+        
+        return fig
+    
+    # ============================================================
+    # GRAPH 5 PLOTTER: Sampling Geometry
+    # ============================================================
+    def _plot_sampling_geometry(self, data: dict):
+        """Create Plotly figure for sampling geometry comparison"""
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=data["pseudo_x"], y=data["pseudo_y"],
+            mode="markers", name="Pseudo-Random",
+            marker=dict(color=C["red"], size=4, opacity=0.6)
+        ))
+        
+        fig.add_trace(go.Scatter(
+            x=data["sobol_x"], y=data["sobol_y"],
+            mode="markers", name="Sobol QMC",
+            marker=dict(color=C["green"], size=4, opacity=0.6)
+        ))
+        
+        fig.update_layout(
+            title=dict(text="05. Sampling Geometry: Uniform Coverage", x=0.02, font=dict(size=20, color=C["title"])),
+            xaxis=dict(title="Dimension 1", range=[0, 1], gridcolor=C["border"]),
+            yaxis=dict(title="Dimension 2", range=[0, 1], gridcolor=C["border"]),
+            paper_bgcolor=C["bg"],
+            plot_bgcolor=C["bg"],
+            font=dict(family="Consolas, Menlo, monospace", color=C["text"], size=11),
+            legend=dict(bgcolor="rgba(22,27,34,0.8)", bordercolor=C["border"], borderwidth=1),
+            margin=dict(l=60, r=40, t=80, b=60),
+            height=500
+        )
+        
+        return fig
+    
+    # ============================================================
+    # HTML COMBINER: Save all figures to single HTML file
+    # ============================================================
+    def _save_pathwise_intuition_html(self, figures: list):
+        """Combine all Plotly figures into a single HTML file with descriptions"""
+        
+        descriptions = [
+            """<div style="padding: 20px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+                <h2 style="color: #58a6ff; margin-top: 0;">01. Drift vs Diffusion Decomposition</h2>
+                <p style="color: #8b949e; line-height: 1.6;">Geometric Brownian Motion combines deterministic drift with stochastic diffusion. This visualization separates these components to show how each contributes to path evolution.</p>
+                <div style="background: rgba(88,166,255,0.08); padding: 12px; border-radius: 8px; border-left: 3px solid #58a6ff; margin-top: 12px;">
+                    <strong style="color: #58a6ff;">Key Insight:</strong> Drift provides the directional trend (exponential growth at rate μ), while diffusion adds randomness around that trend. The combined GBM path is NOT simply drift + diffusion due to the multiplicative nature of geometric processes.
+                </div>
+                <div style="background: rgba(13,17,23,0.9); padding: 10px; border-radius: 8px; border: 1px solid #30363d; margin-top: 10px; font-family: 'Courier New', monospace; color: #f0883e;">
+                    dS(t) = μ S(t) dt + σ S(t) dW(t)
+                </div>
+            </div>""",
+            
+            """<div style="padding: 20px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+                <h2 style="color: #58a6ff; margin-top: 0;">02. Itô Correction: Why -½σ² Appears</h2>
+                <p style="color: #8b949e; line-height: 1.6;">The famous Itô correction term emerges from the quadratic variation of Brownian motion. This is NOT an arbitrary adjustment—it's a mathematical necessity for unbiased price expectations.</p>
+                <div style="background: rgba(88,166,255,0.08); padding: 12px; border-radius: 8px; border-left: 3px solid #58a6ff; margin-top: 12px;">
+                    <strong style="color: #58a6ff;">Mathematical Foundation:</strong> When converting from arithmetic to geometric processes, Jensen's inequality creates an upward bias. The -½σ² term corrects this bias, ensuring E[S(T)] = S₀ exp(μT) under the real-world measure.
+                </div>
+                <div style="background: rgba(13,17,23,0.9); padding: 10px; border-radius: 8px; border: 1px solid #30363d; margin-top: 10px; font-family: 'Courier New', monospace; color: #f0883e;">
+                    S(t) = S₀ exp((μ - ½σ²)t + σW(t))
+                </div>
+            </div>""",
+            
+            """<div style="padding: 20px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+                <h2 style="color: #58a6ff; margin-top: 0;">03. Uncertainty Cone Expansion</h2>
+                <p style="color: #8b949e; line-height: 1.6;">Path uncertainty grows with √t, not linearly. This visualization shows how the probability distribution spreads over time, creating the characteristic "cone" shape.</p>
+                <div style="background: rgba(88,166,255,0.08); padding: 12px; border-radius: 8px; border-left: 3px solid #58a6ff; margin-top: 12px;">
+                    <strong style="color: #58a6ff;">Volatility Scaling:</strong> Standard deviation of log-returns scales as σ√t. This means doubling the time horizon increases uncertainty by only √2 ≈ 1.41x, not 2x. This square-root scaling is fundamental to option pricing.
+                </div>
+            </div>""",
+            
+            """<div style="padding: 20px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+                <h2 style="color: #58a6ff; margin-top: 0;">04. Measure Change: Real-World vs Risk-Neutral</h2>
+                <p style="color: #8b949e; line-height: 1.6;">Option pricing requires switching from the real-world probability measure (P) to the risk-neutral measure (Q). This changes the drift but preserves volatility.</p>
+                <div style="background: rgba(88,166,255,0.08); padding: 12px; border-radius: 8px; border-left: 3px solid #58a6ff; margin-top: 12px;">
+                    <strong style="color: #58a6ff;">Girsanov Theorem:</strong> Under Q, all assets grow at the risk-free rate r, not their actual expected return μ. This measure change is the foundation of no-arbitrage pricing. Volatility σ remains unchanged—it's a physical property of the asset.
+                </div>
+                <div style="background: rgba(13,17,23,0.9); padding: 10px; border-radius: 8px; border: 1px solid #30363d; margin-top: 10px; font-family: 'Courier New', monospace; color: #f0883e;">
+                    Under P: dS = μS dt + σS dW^P | Under Q: dS = rS dt + σS dW^Q
+                </div>
+            </div>""",
+            
+            """<div style="padding: 20px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+                <h2 style="color: #58a6ff; margin-top: 0;">05. Sampling Geometry: Pseudo-Random vs Sobol</h2>
+                <p style="color: #8b949e; line-height: 1.6;">Quasi-Monte Carlo methods like Sobol sequences fill probability space more uniformly than pseudo-random sampling, leading to faster convergence.</p>
+                <div style="background: rgba(88,166,255,0.08); padding: 12px; border-radius: 8px; border-left: 3px solid #58a6ff; margin-top: 12px;">
+                    <strong style="color: #58a6ff;">Low-Discrepancy Sequences:</strong> Sobol sequences avoid clustering and gaps that plague pseudo-random sampling. This improves convergence from O(N^-1/2) to O(N^-1) for smooth integrands. The benefit increases with dimensionality.
+                </div>
+            </div>"""
+        ]
+        
+        # Create header
+        header = f"""
+        <div style="padding: 24px; background: rgba(22,27,34,0.93); border: 1px solid #30363d; border-radius: 12px; margin: 20px 0;">
+            <h1 style="color: #c9d1d9; margin: 0 0 8px; font-size: 28px;">🎓 Pathwise Intuition Engine</h1>
+            <p style="color: #8b949e; line-height: 1.6; font-size: 13px;">Visual learning system for stochastic processes and Monte Carlo foundations. Transform abstract stochastic calculus into computational intuition through interactive animations and decompositions.</p>
+            <p style="color: #58a6ff; font-weight: bold; margin-top: 12px;">Ticker: {self.eng.ticker} | μ = {self.eng.mu:+.2%} | σ = {self.eng.sigma:.2%}</p>
+        </div>
+        """
+        
+        # Combine all HTML
+        html_parts = [header]
+        for desc, fig in zip(descriptions, figures):
+            html_parts.append(desc)
+            html_parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
+        
+        full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Pathwise Intuition Engine - {self.eng.ticker}</title>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <style>
+        body {{
+            margin: 0;
+            padding: 20px;
+            font-family: Consolas, Menlo, monospace;
+            background: linear-gradient(180deg, #0f141d 0%, #0d1117 100%);
+            color: #c9d1d9;
+        }}
+        .container {{
+            max-width: 1400px;
+            margin: 0 auto;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        {''.join(html_parts)}
+    </div>
+</body>
+</html>"""
+        
+        path_out = OUT / f"pathwise_intuition_{self.eng.ticker}.html"
+        path_out.write_text(full_html, encoding="utf-8")
+        rlog(f"  [green]OK[/green] Pathwise Intuition Engine -> [cyan]{path_out}[/cyan]")
+        return path_out
+    
+    def render_all(self, st: dict, N: int, paths: np.ndarray, show=True, no3d=False, adv: dict | None = None):
+        rlog("  [1/8] Rendering Plotly setup lab ...")
+        self.render_setup_lab(show=show)
+        rlog("  [2/8] Rendering Plotly history detail ...")
+        self.render_history_detail(show=show)
+        rlog("  [3/8] Rendering Plotly RNG diagnostics ...")
+        self.render_rng_diagnostics(show=show)
+        rlog("  [4/8] Rendering Pathwise Intuition Engine ...")
+        self.render_pathwise_intuition_engine(show=show)
+        rlog("  [5/8] Rendering Plotly main dashboard ...")
+        self.render_main(st, N, show=show, adv=adv)
+        rlog("  [6/9] Rendering Plotly 6-panel dashboard ...")
+        self.render_dashboard6(st, N, show=show)
+        rlog("  [7/9] Rendering Plotly sensitivity lab ...")
+        self.render_sensitivity_suite(N=N, show=show)
+        if adv:
+            rlog("  [8/9] Rendering Plotly MC diagnostics ...")
+            self.render_mc_diagnostics(adv, show=show)
+            if adv.get("advanced_extensions"):
+                rlog("  [9/10] Rendering advanced extensions layer ...")
+                self.render_advanced_extensions(adv["advanced_extensions"], show=show)
+            if adv.get("diagnostics_failure_lab"):
+                rlog("  [10/11] Rendering diagnostics failure lab ...")
+                self.render_diagnostics_failure_lab(adv["diagnostics_failure_lab"], show=show)
+        if not no3d:
+            rlog("  [11/11] Rendering Plotly 3D views ...")
+            self.render_3d(paths, N, show=show)
+
+
+
+
+# RICH STATS TABLE
+def print_stats_table(eng: GBMEngine, st: dict, N: int, adv: dict | None = None):
+    adv = adv or {}
+    if not HAS_RICH:
+        print(f"\n{'=' * 55}")
+        print(f"  {eng.ticker}  Monte Carlo Results  ({N}d horizon)")
+        print(f"{'=' * 55}")
+        for k, v in [
+            ("S0 (last close)", f"${st['S0']:,.2f}"),
+            ("Drift mu", f"{eng.mu:+.2%}"),
+            ("Volatility sigma", f"{eng.sigma:.2%}"),
+            ("Horizon", f"{N} trading days"),
+            ("Simulations", str(st['paths'].shape[0])),
+            ("Mean final", f"${st['mean']:,.2f}"),
+            ("Mean stderr", f"${st['mean_stderr']:,.4f}"),
+            ("Median final", f"${st['median']:,.2f}"),
+            ("P(profit)", f"{st['prob_up']:.1%}"),
+            ("P(profit) stderr", f"{st['prob_up_stderr']:.3%}"),
+            ("VaR 95%", f"-${st['var95']:,.2f}"),
+            ("CVaR 95%", f"-${st['cvar95']:,.2f}"),
+            ("Sharpe", f"{st['sharpe']:.3f}"),
+        ]:
+            print(f"  {k:<24} {v}")
+        if adv:
+            print("\n  Advanced MC Pricing")
+            print(f"  {'European Call (anti)':<24} ${adv['euro_antithetic']['price']:,.4f} +- {adv['euro_antithetic']['stderr']:.4f}")
+            print(f"  {'Asian Call':<24} ${adv['asian_call']['price']:,.4f} +- {adv['asian_call']['stderr']:.4f}")
+            print(f"  {'Barrier Up-Out':<24} ${adv['barrier_up_out_call']['price']:,.4f} +- {adv['barrier_up_out_call']['stderr']:.4f}")
+            print(f"  {'American Put (LSMC)':<24} ${adv['american_put_lsmc']['price']:,.4f} +- {adv['american_put_lsmc']['stderr']:.4f}")
+            print(f"  {'Convergence slope':<24} {adv['convergence']['loglog_slope']:.3f} (target -0.5)")
+        return
+
+    tbl = Table(
+        title=f"[bold cyan]{eng.ticker}[/bold cyan]  -  Monte Carlo Results  "
+              f"[dim]({N}d / {N//21}mo horizon)[/dim]",
+        box=box.SIMPLE_HEAVY, border_style="dim",
+        show_header=True, header_style="bold dim"
+    )
+    tbl.add_column("Metric",  style="dim",  width=24)
+    tbl.add_column("Value",   style="bold", justify="right", width=18)
+    tbl.add_column("Context", style="dim",  width=32)
+
+    def row(lbl, val, ctx=""):
+        tbl.add_row(lbl, val, ctx)
+    def gr(v): return "green" if v else "red"
+
+    row("Last close",      f"[cyan]${st['S0']:,.2f}[/cyan]", "calibration anchor")
+    row("Drift  mu",        f"[{gr(eng.mu>=0)}]{eng.mu:+.2%}[/{gr(eng.mu>=0)}]",
+                           "annualised log-return drift")
+    row("Volatility  sigma",   f"[yellow]{eng.sigma:.2%}[/yellow]", "annualised std")
+    row("Horizon",         f"{N}d  /  {N//21}mo", f"T = {N/252:.2f} years")
+    row("Simulations",     f"{st['paths'].shape[0]}", "GBM paths")
+    tbl.add_section()
+    row("Mean (T)",        f"[{gr(st['mean']>st['S0'])}]${st['mean']:,.2f}[/{gr(st['mean']>st['S0'])}]")
+    row("Mean stderr",      f"${st['mean_stderr']:,.4f}", "MC standard error")
+    row("95% CI (mean)",    f"${st['mean']-st['mean_ci95_halfwidth']:,.2f} .. ${st['mean']+st['mean_ci95_halfwidth']:,.2f}")
+    row("Median (T)",      f"[yellow]${st['median']:,.2f}[/yellow]")
+    row("5th / 95th",      f"${st['terminal_pct']['5']:,.2f}  /  ${st['terminal_pct']['95']:,.2f}")
+    tbl.add_section()
+    row("P(profit)",       f"[{gr(st['prob_up']>0.5)}]{st['prob_up']:.1%}[/{gr(st['prob_up']>0.5)}]",
+                           "paths ending above S0")
+    row("P(profit) stderr", f"{st['prob_up_stderr']:.3%}", "binomial MC error bar")
+    row("P(double)",       f"[purple]{st['prob_2x']:.1%}[/purple]", "above 2xS0")
+    row("P(halve)",        f"[red]{st['prob_half']:.1%}[/red]", "below 1/2S0")
+    tbl.add_section()
+    row("VaR  95% / 99%",  f"[red]-${st['var95']:,.2f}  /  -${st['var99']:,.2f}[/red]")
+    row("CVaR 95% / 99%",  f"[red]-${st['cvar95']:,.2f}  /  -${st['cvar99']:,.2f}[/red]")
+    tbl.add_section()
+    row("Sharpe ratio",    f"[{gr(st['sharpe']>1)}]{st['sharpe']:+.3f}[/{gr(st['sharpe']>1)}]",
+                           "vs 5% risk-free rate")
+    row("Sortino ratio",   f"[{gr(st['sortino']>1)}]{st['sortino']:+.3f}[/{gr(st['sortino']>1)}]")
+    row("Calmar ratio",    f"[{gr(st['calmar']>0.5)}]{st['calmar']:+.3f}[/{gr(st['calmar']>0.5)}]")
+    row("Hist max DD",     f"[red]{st['hist_max_dd']:.2%}[/red]")
+    row("Win rate",        f"[{gr(st['win_rate']>0.5)}]{st['win_rate']:.1%}[/{gr(st['win_rate']>0.5)}]")
+    row("Avg win / loss",  f"[green]+${st['avg_win']:,.2f}[/green]  /  [red]-${st['avg_loss']:,.2f}[/red]")
+    tbl.add_section()
+    row("Log-return skew", f"{st['lr_skew']:+.3f}", ">0 = right tail")
+    row("Excess kurtosis", f"{st['lr_kurt']:+.3f}", ">0 = fatter tails")
+    row("Jarque-Bera p",   f"{st['jb_p']:.4f}", "< 0.05 -> reject normality")
+
+    if adv:
+        tbl.add_section()
+        row("Euro call (pseudo)", f"${adv['euro_plain']['price']:,.4f}", f"SE={adv['euro_plain']['stderr']:.4f}")
+        row("Euro call (anti)", f"${adv['euro_antithetic']['price']:,.4f}", f"SE={adv['euro_antithetic']['stderr']:.4f}")
+        row("Euro call (QMC)", f"${adv['euro_qmc']['price']:,.4f}", f"SE={adv['euro_qmc']['stderr']:.4f}")
+        row("Euro call (CV)", f"${adv['euro_control_variate']['price']:,.4f}", f"SE={adv['euro_control_variate']['stderr']:.4f}")
+        row("Asian call", f"${adv['asian_call']['price']:,.4f}", f"SE={adv['asian_call']['stderr']:.4f}")
+        row("Barrier up-out", f"${adv['barrier_up_out_call']['price']:,.4f}", f"SE={adv['barrier_up_out_call']['stderr']:.4f}")
+        row("American put LSMC", f"${adv['american_put_lsmc']['price']:,.4f}", f"SE={adv['american_put_lsmc']['stderr']:.4f}")
+        row("Pathwise Delta", f"{adv['pathwise_greeks']['delta']:+.4f}", f"SE={adv['pathwise_greeks']['delta_stderr']:.4f}")
+        row("Pathwise Vega", f"{adv['pathwise_greeks']['vega']:+.4f}", f"SE={adv['pathwise_greeks']['vega_stderr']:.4f}")
+        row("Conv slope", f"{adv['convergence']['loglog_slope']:+.3f}", "expected -0.500")
+        row("Anti variance ratio", f"{adv['variance_reduction_ratio_antithetic']:.3f}", "SE(anti)^2 / SE(pseudo)^2")
+        row("QMC variance ratio", f"{adv['variance_reduction_ratio_qmc']:.3f}", "SE(qmc)^2 / SE(pseudo)^2")
+        row("CV variance ratio", f"{adv['variance_reduction_ratio_cv']:.3f}", "SE(cv)^2 / SE(pseudo)^2")
+        row("Multi-asset corr", f"{adv['multi_asset_emp_corr']:+.3f}", "empirical corr (2-asset sample)")
+
+    con.print(tbl)
+
+    p = OUT / f"mc_report_{eng.ticker}.txt"
+    with open(p, "w") as f:
+        f.write(f"Monte Carlo Report - {eng.ticker}\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        for k, v in [
+            ("Ticker", eng.ticker), ("S0", f"${st['S0']:,.2f}"),
+            ("Mu", f"{eng.mu:+.2%}"), ("Sigma", f"{eng.sigma:.2%}"),
+            ("N_days", str(N)), ("Sims", str(st['paths'].shape[0])),
+            ("Mean", f"${st['mean']:,.2f}"), ("Median", f"${st['median']:,.2f}"),
+            ("Mean_stderr", f"${st['mean_stderr']:,.4f}"),
+            ("P_profit", f"{st['prob_up']:.1%}"),
+            ("P_profit_stderr", f"{st['prob_up_stderr']:.3%}"),
+            ("VaR95", f"-${st['var95']:,.2f}"), ("CVaR95", f"-${st['cvar95']:,.2f}"),
+            ("Sharpe", f"{st['sharpe']:.3f}"), ("Sortino", f"{st['sortino']:.3f}"),
+            ("Calmar", f"{st['calmar']:.3f}"), ("MaxDD", f"{st['hist_max_dd']:.2%}"),
+        ]:
+            f.write(f"{k:<20} {v}\n")
+        if adv:
+            f.write("\nAdvanced_Monte_Carlo\n")
+            f.write(f"{'Euro_call_pseudo':<20} ${adv['euro_plain']['price']:,.4f} | SE={adv['euro_plain']['stderr']:.4f}\n")
+            f.write(f"{'Euro_call_anti':<20} ${adv['euro_antithetic']['price']:,.4f} | SE={adv['euro_antithetic']['stderr']:.4f}\n")
+            f.write(f"{'Euro_call_qmc':<20} ${adv['euro_qmc']['price']:,.4f} | SE={adv['euro_qmc']['stderr']:.4f}\n")
+            f.write(f"{'Euro_call_cv':<20} ${adv['euro_control_variate']['price']:,.4f} | SE={adv['euro_control_variate']['stderr']:.4f}\n")
+            f.write(f"{'Asian_call':<20} ${adv['asian_call']['price']:,.4f} | SE={adv['asian_call']['stderr']:.4f}\n")
+            f.write(f"{'Barrier_up_out':<20} ${adv['barrier_up_out_call']['price']:,.4f} | SE={adv['barrier_up_out_call']['stderr']:.4f}\n")
+            f.write(f"{'American_put_lsmc':<20} ${adv['american_put_lsmc']['price']:,.4f} | SE={adv['american_put_lsmc']['stderr']:.4f}\n")
+            f.write(f"{'Pathwise_delta':<20} {adv['pathwise_greeks']['delta']:+.4f} | SE={adv['pathwise_greeks']['delta_stderr']:.4f}\n")
+            f.write(f"{'Pathwise_vega':<20} {adv['pathwise_greeks']['vega']:+.4f} | SE={adv['pathwise_greeks']['vega_stderr']:.4f}\n")
+            f.write(f"{'Convergence_slope':<20} {adv['convergence']['loglog_slope']:+.4f}\n")
+            f.write(f"{'Var_ratio_anti':<20} {adv['variance_reduction_ratio_antithetic']:.4f}\n")
+            f.write(f"{'Var_ratio_qmc':<20} {adv['variance_reduction_ratio_qmc']:.4f}\n")
+            f.write(f"{'Var_ratio_cv':<20} {adv['variance_reduction_ratio_cv']:.4f}\n")
+            f.write(f"{'Multi_asset_corr':<20} {adv['multi_asset_emp_corr']:+.4f}\n")
+    rlog(f"  [green]OK[/green] Report saved -> [cyan]{p}[/cyan]")
+
+
+
+
+############################################################################################################################################################################################
+
+
+
+# MAIN
+def get_args():
+    p = argparse.ArgumentParser(
+        description="Monte Carlo Stock Terminal  v4.0",
+        formatter_class=argparse.RawTextHelpFormatter
+    )
+    p.add_argument("--ticker",   default="",    help="Stock ticker, e.g. AAPL")
+    p.add_argument("--sims",     type=int, default=0,   help="Number of simulations")
+    p.add_argument("--days",     type=int, default=0,   help="Forecast horizon (trading days)")
+    p.add_argument("--seed",     type=int, default=42,  help="Random seed for reproducible simulation")
+    p.add_argument("--no3d",     action="store_true",   help="Skip 3D visualisations")
+    p.add_argument("--period",   default="2y",          help="Historical data period (yfinance)")
+    p.add_argument(
+        "--renderer",
+        choices=["plotly"],
+        default="plotly",
+        help=(
+            "Rendering engine:\n"
+            "  plotly      -> interactive HTML files (hover/zoom/pan)\n"
+            "  (default: plotly)"
+        )
+    )
+    return p.parse_args()
+
+def _prompt(msg, default, cast=str):
+    try:
+        raw = input(msg).strip()
+        return cast(raw) if raw else default
+    except (ValueError, EOFError):
+        return default
+
+def _choose_renderer(arg_renderer: str) -> str:
+    return "plotly"
+
+
+def _run_advanced_pricing(eng: GBMEngine, N: int, nsims: int, seed: int) -> dict:
+    def _profile(samples: np.ndarray, true_price: float, n_grid: list[int]) -> dict:
+        samples = np.asarray(samples, dtype=float)
+        running_n = np.arange(1, len(samples) + 1, dtype=float)
+        running_mean = np.cumsum(samples) / running_n
+        csum = np.cumsum(samples)
+        csum2 = np.cumsum(samples * samples)
+        running_var = np.maximum(csum2 / running_n - running_mean * running_mean, 0.0)
+        running_std = np.sqrt(running_var)
+        running_mcse = running_std / np.sqrt(running_n)
+        grid = np.array([n for n in n_grid if n <= len(samples)], dtype=int)
+        grid = grid[grid >= 2]
+        est = running_mean[grid - 1]
+        se = running_mcse[grid - 1]
+        err = np.abs(est - true_price)
+        positive = err > 1e-12
+        slope = float(np.polyfit(np.log(grid[positive]), np.log(err[positive]), 1)[0]) if positive.sum() >= 2 else float("nan")
+        eps = max(abs(true_price) * 0.01, 0.01)
+        inside = np.abs(running_mean - true_price) <= eps
+        min_n = int(np.argmax(inside) + 1) if inside.any() else None
+        return {
+            "n_grid": grid.tolist(),
+            "estimates": est.tolist(),
+            "stderrs": se.tolist(),
+            "errors": err.tolist(),
+            "running_mean": running_mean.tolist(),
+            "running_std": running_std.tolist(),
+            "running_mcse": running_mcse.tolist(),
+            "epsilon": float(eps),
+            "min_n_epsilon": min_n,
+            "loglog_slope": slope,
+            "final_n": int(running_n[-1]) if len(running_n) else 0,
+            "final_std": float(running_std[-1]) if len(running_std) else float("nan"),
+            "final_mcse": float(running_mcse[-1]) if len(running_mcse) else float("nan"),
+        }
+
+    k_atm = eng.S0
+    pricing_sims = max(2000, nsims)
+    base = int(seed)
+
+    euro_plain = eng.price_european_option_mc(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 101,
+        random_method="pseudo", antithetic=False, control_variate=False,
+    )
+    euro_anti = eng.price_european_option_mc(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 102,
+        random_method="pseudo", antithetic=True, control_variate=False,
+    )
+    euro_qmc = eng.price_european_option_mc(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 103,
+        random_method="sobol", antithetic=False, control_variate=False,
+    )
+    euro_cv = eng.price_european_option_mc(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 104,
+        random_method="pseudo", antithetic=True, control_variate=True,
+    )
+    asian_call = eng.price_asian_option_mc(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 105,
+        option_type="call", random_method="pseudo", antithetic=True, control_variate=True,
+    )
+    barrier_call = eng.price_barrier_option_mc(
+        K=k_atm, barrier=1.2 * eng.S0, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 106,
+        option_type="call", barrier_type="up-and-out", random_method="pseudo", antithetic=True,
+    )
+    american_put = eng.price_american_option_lsmc(
+        K=k_atm, r=0.05, N=N, num_sim=max(3000, pricing_sims),
+        seed=base + 107,
+        option_type="put", random_method="pseudo", antithetic=True,
+    )
+    greeks = eng.pathwise_greeks(
+        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
+        seed=base + 108,
+        option_type="call", random_method="pseudo", antithetic=True,
+    )
+    conv = eng.convergence_analysis(
+        K=k_atm, r=0.05, N=N, option_type="call",
+        n_grid=[250, 500, 1000, 2000, 4000, 8000],
+        antithetic=True, random_method="pseudo", control_variate=False,
+        seed=base + 109,
+    )
+    true_price = eng.black_scholes_price(K=k_atm, T=N / 252.0, r=0.05, option_type="call")
+    trace_n = max(8000, pricing_sims)
+    conv_plain_samples = eng.european_payoff_samples(
+        K=k_atm, r=0.05, N=N, num_sim=trace_n, seed=base + 141,
+        option_type="call", random_method="pseudo", antithetic=False,
+    )
+    conv_anti_samples = eng.european_payoff_samples(
+        K=k_atm, r=0.05, N=N, num_sim=trace_n, seed=base + 142,
+        option_type="call", random_method="pseudo", antithetic=True,
+    )
+    conv_qmc_samples = eng.european_payoff_samples(
+        K=k_atm, r=0.05, N=N, num_sim=trace_n, seed=base + 143,
+        option_type="call", random_method="sobol", antithetic=False,
+    )
+    profile_grid = [250, 500, 1000, 2000, 4000, 8000]
+    conv_profiles = {
+        "pseudo": _profile(conv_plain_samples, true_price, profile_grid),
+        "antithetic": _profile(conv_anti_samples, true_price, profile_grid),
+        "qmc": _profile(conv_qmc_samples, true_price, profile_grid),
+    }
+    multi_paths = eng.simulate_multi_asset_cholesky(
+        S0_vec=np.array([eng.S0, eng.S0 * 0.95]),
+        mu_vec=np.array([eng.mu, eng.mu * 0.9]),
+        sigma_vec=np.array([eng.sigma, eng.sigma * 1.1]),
+        corr=np.array([[1.0, 0.55], [0.55, 1.0]]),
+        N=N,
+        num_sim=max(2000, nsims),
+        seed=base + 110,
+        risk_neutral_rate=None,
+    )
+    ret_a = np.log(multi_paths[:, -1, 0] / multi_paths[:, 0, 0])
+    ret_b = np.log(multi_paths[:, -1, 1] / multi_paths[:, 0, 1])
+    emp_corr = float(np.corrcoef(ret_a, ret_b)[0, 1])
+    ext_layer = AdvancedMonteCarloExtensions(eng).build_report(
+        N=N,
+        num_sim=max(400, nsims),
+        seed=base + 200,
+    )
+    diag_lab = MonteCarloDiagnosticsLab(eng).build_report(
+        seed=base + 4000,
+    )
+
+    return {
+        "euro_plain": euro_plain,
+        "euro_antithetic": euro_anti,
+        "euro_qmc": euro_qmc,
+        "euro_control_variate": euro_cv,
+        "asian_call": asian_call,
+        "barrier_up_out_call": barrier_call,
+        "american_put_lsmc": american_put,
+        "pathwise_greeks": greeks,
+        "convergence": conv,
+        "convergence_profiles": conv_profiles,
+        "black_scholes_call": true_price,
+        "horizon_days": int(N),
+        "variance_reduction_ratio_antithetic": (euro_anti["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
+        "variance_reduction_ratio_qmc": (euro_qmc["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
+        "variance_reduction_ratio_cv": (euro_cv["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
+        "multi_asset_emp_corr": emp_corr,
+        "advanced_extensions": ext_layer,
+        "diagnostics_failure_lab": diag_lab,
+    }
+
+def main():
+    args = get_args()
+    print_banner()
+
+    if HAS_RICH:
+        con.rule("[dim]Configuration[/dim]")
+    else:
+        plain_line()
+
+    ticker   = (args.ticker or
+                _prompt("  Ticker symbol [default: AAPL]: ", "AAPL")).upper().strip()
+    N        = (args.days or
+                _prompt("  Forecast days  [default: 252 = 1 year]: ", 252, int))
+    nsims    = (args.sims or
+                _prompt("  Simulations    [default: 500]: ", 500, int))
+    renderer = _choose_renderer(args.renderer)
+
+    N     = max(1, N)
+    nsims = max(1, nsims)
+
+    if HAS_RICH:
+        con.rule()
+    else:
+        plain_line()
+
+    eng = GBMEngine(ticker)
+    adv = {}
+
+    if HAS_RICH:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(bar_width=35),
+            TimeElapsedColumn(),
+            console=con, transient=True
+        ) as prog:
+            t1 = prog.add_task("Fetching data ...",            total=4)
+            eng.fetch(args.period, seed=args.seed);            prog.advance(t1)
+            t2 = prog.add_task("Calibrating parameters ...",   total=4)
+            eng.calibrate();                                  prog.advance(t2)
+            t3 = prog.add_task(f"Simulating {nsims} paths ...", total=4)
+            paths, tpts = eng.simulate(N=N, num_sim=nsims, seed=args.seed)
+            prog.advance(t3)
+            t4 = prog.add_task("Computing statistics ...",     total=4)
+            st = eng.compute_stats(paths);                    prog.advance(t4)
+    else:
+        print("  Fetching data ...")
+        eng.fetch(args.period, seed=args.seed)
+        print("  Calibrating ...")
+        eng.calibrate()
+        print(f"  Simulating {nsims} paths x {N} days ...")
+        paths, tpts = eng.simulate(N=N, num_sim=nsims, seed=args.seed)
+        print("  Computing statistics ...")
+        st = eng.compute_stats(paths)
+
+    adv = _run_advanced_pricing(eng=eng, N=N, nsims=nsims, seed=args.seed)
+
+    rlog(f"\n  [green]OK[/green] Calibrated:  "
+         f"S0=${eng.S0:,.2f}  mu={eng.mu:+.2%}  sigma={eng.sigma:.2%}")
+
+    if HAS_RICH:
+        con.rule("[dim]Results[/dim]")
+    print_stats_table(eng, st, N, adv=adv)
+
+    if HAS_RICH:
+        con.rule(f"[dim]Visualisations  -  renderer=[cyan]{renderer}[/cyan][/dim]")
+    else:
+        print(f"\n  Renderer: {renderer}")
+
+    if not HAS_PLOTLY:
+        raise RuntimeError(
+            "Plotly is required in Plotly-only mode. Install it with: pip install plotly"
+        )
+
+    rlog("  [bold]Plotly[/bold] interactive ...")
+    ply_dash = PlotlyDashboard(eng)
+    ply_dash.render_all(st, N, paths, show=False, no3d=args.no3d, adv=adv)
+
+    if HAS_RICH:
+        con.rule()
+        con.print(f"  [bold green]Done.[/bold green]  "
+                  f"All outputs saved to [cyan]{OUT}/[/cyan]")
+    else:
+        print(f"\n  Done. Outputs saved to {OUT}/")
+
+if __name__ == "__main__":
+    main()
