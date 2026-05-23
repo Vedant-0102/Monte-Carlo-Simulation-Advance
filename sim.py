@@ -289,11 +289,6 @@ def plain_line(width: int = 55):
 ############################################################################################################################################################################################
 
 
-############################################################################################################################################################################################
-
-############################################################################################################################################################################################
-
-
 # GBM ENGINE
 class GBMEngine:
     def __init__(self, ticker: str):
@@ -2816,7 +2811,6 @@ class PlotlyDashboard:
             fig.show()
         return fig
 
-
     def render_rng_diagnostics(self, show=False):
         rng_diag = _compute_rng_diagnostics(_rng_diagnostic_sample())
         uni_x, uni_y = _rng_uniform_pairs()
@@ -3301,6 +3295,7 @@ class PlotlyDashboard:
             line=dict(color=C["amber"], width=1.5, dash="dash"),
             hovertemplate="MA50: $%{y:,.2f}<extra></extra>"
         ), row=1, col=1)
+
 
 
         # Bollinger upper
@@ -3885,8 +3880,6 @@ class PlotlyDashboard:
                 ("CV ratio",     f"{adv['variance_reduction_ratio_cv']:.3f}"),
                 ("BS call",      f"${adv['black_scholes_call']:,.4f}"),
             ])
-
-
 
         def metric_fill(metric: str, value: str) -> str:
             good = "#EAF3DE"
@@ -5036,7 +5029,6 @@ class PlotlyDashboard:
             fig.show()
         return fig
 
-
     def render_advanced_extensions(self, ext: dict, show=False):
         payload = json.dumps(ext)
         html_doc = f"""<!DOCTYPE html>
@@ -5599,7 +5591,7 @@ class PlotlyDashboard:
         <div class="chart" id="failBarrierChart"></div>
         <div class="chart" id="failIneffChart"></div>
       </div>
-      <div class="note">Higher score means more diagnostic concern. These are stress diagnostics, not probabilities of real-world failure.</div>
+      <div class="note" style="margin-top: 16px;">Higher score means more diagnostic concern. These are stress diagnostics, not probabilities of real-world failure.</div>
     </section>
 
     <section class="section">
