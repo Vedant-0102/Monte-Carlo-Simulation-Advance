@@ -3302,3 +3302,587 @@ class PlotlyDashboard:
             hovertemplate="MA50: $%{y:,.2f}<extra></extra>"
         ), row=1, col=1)
 
+
+        # Bollinger upper
+        fig.add_trace(go.Scatter(
+            x=h.index, y=bb_upper, mode="lines", name="BB+2sigma",
+            line=dict(color=C["purple"], width=0.8, dash="dot"), opacity=0.7,
+            hovertemplate="BB+2sigma: $%{y:,.2f}<extra></extra>",
+            showlegend=False
+        ), row=1, col=1)
+
+
+
+        # Bollinger lower + fill
+        fig.add_trace(go.Scatter(
+            x=h.index, y=bb_lower, mode="lines", name="BB +/-2sigma",
+            line=dict(color=C["purple"], width=0.8, dash="dot"), opacity=0.7,
+            fill="tonexty", fillcolor="rgba(163,113,247,0.06)",
+            hovertemplate="BB-2sigma: $%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[hi52_idx], y=[hi52], mode="markers", name="52w high",
+            marker=dict(color=C["green"], size=11, symbol="triangle-up"),
+            hovertemplate="52w high: %{x}<br>$%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[lo52_idx], y=[lo52], mode="markers", name="52w low",
+            marker=dict(color=C["red"], size=11, symbol="triangle-down"),
+            hovertemplate="52w low: %{x}<br>$%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index[cross_up.fillna(False)], y=h[cross_up.fillna(False)], mode="markers",
+            name="Bull cross", marker=dict(color=C["green"], size=6, symbol="circle")
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index[cross_dn.fillna(False)], y=h[cross_dn.fillna(False)], mode="markers",
+            name="Bear cross", marker=dict(color=C["red"], size=6, symbol="circle")
+        ), row=1, col=1)
+        for start, end in _contiguous_true_ranges(squeeze_mask):
+            fig.add_vrect(
+                x0=h.index[start], x1=h.index[end],
+                fillcolor="#9aa4b2", opacity=0.08, line_width=0,
+                row=1, col=1,
+            )
+
+        finals = np.asarray(st["finals"], dtype=float)
+        n_finals = max(len(finals), 1)
+        fd_iqr = float(np.subtract(*np.percentile(finals, [75, 25]))) if len(finals) else 0.0
+        fd_h = 2 * fd_iqr * (n_finals ** (-1 / 3)) if fd_iqr > 0 else 0.0
+        fd_bins = int(np.ceil((finals.max() - finals.min()) / fd_h)) if fd_h > 0 else 0
+        fd_bins = int(np.clip(fd_bins if fd_bins > 0 else np.sqrt(n_finals), 20, 120))
+        var5_price = float(np.quantile(finals, 0.05))
+        cvar5_price = float(finals[finals <= var5_price].mean()) if np.any(finals <= var5_price) else var5_price
+        skew_terminal = float(scipy_stats.skew(finals))
+        ex_kurt_terminal = float(scipy_stats.kurtosis(finals, fisher=True))
+        fig.add_trace(go.Histogram(
+            x=finals, nbinsx=fd_bins, name="Final prices",
+            histnorm="probability density",
+            marker=dict(
+                color=finals,
+                colorscale=[[0, C["red"]], [0.5, C["amber"]], [1.0, C["green"]]],
+                colorbar=None,
+                line=dict(width=0),
+            ),
+            opacity=0.82,
+            hovertemplate="S(T): $%{x:,.2f}<br>Density: %{y:.4f}<extra></extra>"
+        ), row=1, col=2, secondary_y=False)
+
+
+
+
+        # KDE overlay
+        kde_x = np.linspace(finals.min(), finals.max(), 250)
+        kde   = scipy_stats.gaussian_kde(finals)
+        kde_y = kde(kde_x)
+        mode_x = float(kde_x[np.argmax(kde_y)])
+        mode_y = float(np.max(kde_y))
+        fig.add_trace(go.Scatter(
+            x=kde_x, y=kde_y, mode="lines", name="KDE",
+            line=dict(color=C["cyan"], width=2.5),
+            hovertemplate="$%{x:,.0f}: density=%{y:.4f}<extra></extra>"
+        ), row=1, col=2, secondary_y=False)
+        fig.add_trace(go.Scatter(
+            x=kde_x, y=np.clip(kde_y, 1e-9, None), mode="lines", name="Log density",
+            line=dict(color=C["pink"], width=1.6, dash="dot"),
+            hovertemplate="$%{x:,.0f}: log-density view=%{y:.4e}<extra></extra>",
+            visible="legendonly",
+        ), row=1, col=2, secondary_y=True)
+        fig.add_trace(go.Scatter(
+            x=[mode_x], y=[mode_y], mode="markers", name="Mode",
+            marker=dict(color=C["green"], size=11, symbol="diamond"),
+            hovertemplate="Mode: $%{x:,.2f}<br>Density=%{y:.4f}<extra></extra>"
+        ), row=1, col=2, secondary_y=False)
+
+        for val, col in [(S0, C["red"]), (st["mean"], C["green"]), (st["median"], C["amber"])]:
+            fig.add_vline(
+                x=val,
+                line_color=col,
+                line_dash="dash",
+                line_width=1.8,
+                row=1,
+                col=2,
+            )
+        fig.add_vline(x=st["median"], line_color=C["amber"], line_dash="dot", line_width=1.8, row=1, col=2)
+        fig.add_vrect(x0=finals.min(), x1=var5_price, fillcolor="rgba(248,81,73,0.12)", line_width=0, row=1, col=2)
+        fig.add_annotation(
+            xref="x2 domain",
+            yref="y2 domain",
+            x=0.02,
+            y=0.98,
+            text=(
+                f"<b>S0</b> ${S0:,.0f}<br>"
+                f"<b>Mean</b> ${st['mean']:,.0f}<br>"
+                f"<b>Median</b> ${st['median']:,.0f}<br>"
+                f"<b>Mode</b> ${mode_x:,.0f}<br>"
+                f"<b>VaR 5%</b> ${var5_price:,.0f}"
+            ),
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+        fig.add_annotation(
+            xref="x2 domain",
+            yref="y2 domain",
+            x=0.98,
+            y=0.98,
+            text=f"Skew={skew_terminal:+.3f}<br>Excess kurt={ex_kurt_terminal:+.3f}",
+            showarrow=False,
+            align="right",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        lr = self.eng.log_ret.values
+        jb_stat, jb_p = scipy_stats.jarque_bera(lr)
+        lr_ex_kurt = float(scipy_stats.kurtosis(lr, fisher=True))
+        fig.add_trace(go.Histogram(
+            x=lr, nbinsx=60, name="Log-returns",
+            histnorm="probability density",
+            marker=dict(color=C["cyan"], line=dict(width=0)), opacity=0.68,
+            hovertemplate="Return: %{x:.2%}<br>Density: %{y:.4f}<extra></extra>"
+        ), row=1, col=3)
+
+        x_lr = np.linspace(lr.min(), lr.max(), 300)
+        mu_r, sd_r = lr.mean(), lr.std()
+        fig.add_trace(go.Scatter(
+            x=x_lr, y=norm.pdf(x_lr, mu_r, sd_r), mode="lines", name="Normal fit",
+            line=dict(color=C["amber"], width=2.0),
+            hovertemplate="Return: %{x:.2%}<br>Normal PDF: %{y:.4f}<extra></extra>"
+        ), row=1, col=3)
+        df_t, loc_t, scale_t = t_dist.fit(lr)
+        fig.add_trace(go.Scatter(
+            x=x_lr, y=t_dist.pdf(x_lr, df_t, loc_t, scale_t), mode="lines",
+            name=f"t-fit (nu={df_t:.1f})",
+            line=dict(color=C["purple"], width=1.8, dash="dash"),
+            hovertemplate="Return: %{x:.2%}<br>t-PDF: %{y:.4f}<extra></extra>"
+        ), row=1, col=3)
+        fig.add_annotation(
+            xref="x3 domain",
+            yref="y3 domain",
+            x=0.98,
+            y=0.98,
+            text=f"JB p={jb_p:.3g}<br>Excess kurt={lr_ex_kurt:+.3f}<br>t dof={df_t:.2f}",
+            showarrow=False,
+            align="right",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        days = np.arange(st["paths"].shape[1])
+        sample_n = min(50, st["paths"].shape[0])
+        sample_idx = np.random.default_rng(1).choice(st["paths"].shape[0], sample_n, replace=False)
+
+        for i in sample_idx:
+            f   = st["paths"][i, -1]
+            col = C["green"] if f > S0*1.3 else C["red"] if f < S0*0.7 else C["muted"]
+            fig.add_trace(go.Scatter(
+                x=days, y=st["paths"][i], mode="lines",
+                line=dict(color=col, width=0.6),
+                opacity=0.20, showlegend=False, hoverinfo="skip"
+            ), row=2, col=1)
+
+
+
+
+        # 25-75 fill band
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["75"], mode="lines",
+            line=dict(color="rgba(88,166,255,0)", width=0), showlegend=False, hoverinfo="skip"
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["25"], mode="lines", name="25-75% band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.18)",
+            line=dict(color="rgba(88,166,255,0)", width=0), hoverinfo="skip"
+        ), row=2, col=1)
+
+        fig.add_trace(go.Scatter(
+            x=days, y=st["mean_path"], mode="lines", name="Mean path",
+            line=dict(color=C["amber"], width=3),
+            hovertemplate="Day %{x}: Mean=$%{y:,.2f}<extra></extra>"
+        ), row=2, col=1)
+        fig.add_hline(y=S0, line_color=C["red"], line_dash="dash", line_width=1.5,
+                      row=2, col=1,
+                      annotation_text=f"S0 ${S0:,.0f}", annotation_font=dict(color=C["red"], size=8),
+                      annotation_position="top left")
+
+
+
+        # 5-95 fill
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["95"], mode="lines",
+            line=dict(color=C["green"], width=1.5, dash="dash"), name="95th pct",
+            hovertemplate="Day %{x}: 95th=$%{y:,.2f}<extra></extra>"
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["5"], mode="lines", name="5th pct",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.12)",
+            line=dict(color=C["red"], width=1.5, dash="dash"),
+            hovertemplate="Day %{x}: 5th=$%{y:,.2f}<extra></extra>",
+            showlegend=False
+        ), row=2, col=2)
+        # 25-75 fill
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["75"], mode="lines",
+            line=dict(color=C["green"], width=0.8, dash="dot"), showlegend=False, hoverinfo="skip"
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["25"], mode="lines",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.22)",
+            line=dict(color=C["red"], width=0.8, dash="dot"),
+            name="25-75%", hoverinfo="skip",
+            showlegend=False
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["50"], mode="lines", name="Median",
+            line=dict(color=C["amber"], width=2.5),
+            hovertemplate="Day %{x}: Median=$%{y:,.2f}<extra></extra>",
+            showlegend=False
+        ), row=2, col=2)
+
+        T    = st["paths"].shape[1] / 252.0
+        t_arr = np.linspace(0, T, len(days))
+        e_path = self.eng.S0 * np.exp(self.eng.mu * t_arr)
+        fig.add_trace(go.Scatter(
+            x=days, y=e_path, mode="lines", name="E[S_t]",
+            line=dict(color=C["purple"], width=1.5, dash="dot"),
+            hovertemplate="Day %{x}: E[S]=$%{y:,.2f}<extra></extra>",
+            showlegend=False
+        ), row=2, col=2)
+        fig.add_annotation(
+            xref="x5 domain",
+            yref="y5 domain",
+            x=0.02,
+            y=0.98,
+            text="Fan view of simulated price percentiles around drift reference",
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        paths_arr = st["paths"]
+        n_bins = 60
+        pmin = paths_arr.min() * 0.97
+        pmax = paths_arr.max() * 1.03
+        pbins = np.linspace(pmin, pmax, n_bins+1)
+        stride = max(1, paths_arr.shape[1]//100)
+        t_idx  = np.arange(0, paths_arr.shape[1], stride)
+        hm = np.zeros((n_bins, len(t_idx)))
+        for col_i, t in enumerate(t_idx):
+            c, _ = np.histogram(paths_arr[:, t], bins=pbins)
+            total = c.sum()
+            hm[:, col_i] = c / total if total > 0 else c
+
+        fig.add_trace(go.Heatmap(
+            z=hm,
+            x=t_idx,
+            y=0.5*(pbins[:-1]+pbins[1:]),
+            colorscale=[
+                [0.00, C["bg"]],
+                [0.15, "#0f2d4a"],
+                [0.35, "#1f6feb"],
+                [0.55, C["cyan"]],
+                [0.75, C["green"]],
+                [0.90, C["amber"]],
+                [1.00, "#ffd700"],
+            ],
+            showscale=True,
+            colorbar=dict(
+                title=dict(text="Density", font=dict(color=C["muted"], size=8)),
+                tickfont=dict(color=C["muted"], size=7),
+                thickness=12,
+                len=0.34,
+                x=1.11,
+                xanchor="left",
+                y=0.47,
+                yanchor="middle",
+                bgcolor="rgba(22,27,34,0.8)",
+                bordercolor=C["border"],
+                borderwidth=1
+            ),
+            hovertemplate="Day %{x}: $%{y:,.0f} | density=%{z:.4f}<extra></extra>",
+            name="Density"
+        ), row=2, col=3)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["mean_path"], mode="lines", name="Mean path",
+            line=dict(color="white", width=2.5), showlegend=False,
+            hovertemplate="Day %{x}: Mean=$%{y:,.2f}<extra></extra>"
+        ), row=2, col=3)
+        fig.add_annotation(
+            xref="x6 domain",
+            yref="y6 domain",
+            x=0.02,
+            y=0.98,
+            text="Each day column sums to 1.0",
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        rv = self.eng.log_ret.rolling(30).std() * np.sqrt(252)
+        ewma_var = self.eng.log_ret.pow(2).ewm(alpha=1 - 0.94, adjust=False).mean()
+        ewma_vol = np.sqrt(ewma_var) * np.sqrt(252)
+        rv_hi = float(rv.quantile(0.75)) if rv.notna().any() else float("nan")
+        rv_lo = float(rv.quantile(0.25)) if rv.notna().any() else float("nan")
+        high_mask = (rv > rv_hi).fillna(False).to_numpy()
+        low_mask = (rv < rv_lo).fillna(False).to_numpy()
+        for start, end in _contiguous_true_ranges(high_mask):
+            fig.add_vrect(x0=rv.index[start], x1=rv.index[end], fillcolor="rgba(248,81,73,0.10)", line_width=0, row=3, col=1)
+        for start, end in _contiguous_true_ranges(low_mask):
+            fig.add_vrect(x0=rv.index[start], x1=rv.index[end], fillcolor="rgba(63,185,80,0.10)", line_width=0, row=3, col=1)
+        fig.add_trace(go.Scatter(
+            x=rv.index, y=rv.values, mode="lines", name="30d rolling vol",
+            line=dict(color=C["amber"], width=1.8),
+            fill="tozeroy", fillcolor=f"rgba(227,179,65,0.10)",
+            hovertemplate="Date: %{x}<br>Vol: %{y:.1%}<extra></extra>"
+        ), row=3, col=1)
+        fig.add_trace(go.Scatter(
+            x=ewma_vol.index, y=ewma_vol.values, mode="lines", name="EWMA vol",
+            line=dict(color=C["cyan"], width=1.6, dash="dot"),
+            hovertemplate="Date: %{x}<br>EWMA Vol: %{y:.1%}<extra></extra>"
+        ), row=3, col=1)
+        fig.add_hline(y=self.eng.sigma, line_color=C["purple"], line_dash="dash",
+                      row=3, col=1,
+                      annotation_text=f"Full-period sigma={self.eng.sigma:.1%}",
+                      annotation_font=dict(color=C["purple"], size=8),
+                      annotation_position="top left")
+        fig.add_annotation(
+            xref="x7 domain",
+            yref="y7 domain",
+            x=0.98,
+            y=0.98,
+            text=f"Current={rv.dropna().iloc[-1]:.1%}<br>Low<{rv_lo:.1%}<br>High>{rv_hi:.1%}",
+            showarrow=False,
+            align="right",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        terminal_r = np.log(finals / S0)
+        terminal_r_std = (terminal_r - terminal_r.mean()) / (terminal_r.std() + 1e-12)
+        p = (np.arange(1, len(terminal_r_std) + 1) - 0.5) / len(terminal_r_std)
+        q_theory = norm.ppf(p)
+        q_sample = np.sort(terminal_r_std)
+        tail_mask = (p <= 0.05) | (p >= 0.95)
+        fig.add_trace(go.Scatter(
+            x=q_theory[~tail_mask], y=q_sample[~tail_mask], mode="markers", name="Q-Q core",
+            marker=dict(color=C["blue"], size=3.5, opacity=0.65),
+            hovertemplate="Theoretical: %{x:.3f}<br>Terminal return z-score: %{y:.3f}<extra></extra>"
+        ), row=3, col=2)
+        fig.add_trace(go.Scatter(
+            x=q_theory[tail_mask], y=q_sample[tail_mask], mode="markers", name="Q-Q tails",
+            marker=dict(color=C["red"], size=4.5, opacity=0.75),
+            hovertemplate="Tail quantile: %{x:.3f}<br>Terminal return z-score: %{y:.3f}<extra></extra>"
+        ), row=3, col=2)
+        ql = np.array([q_theory[0], q_theory[-1]])
+        fig.add_trace(go.Scatter(
+            x=ql, y=ql, mode="lines", name="45deg ref",
+            line=dict(color=C["amber"], width=2.0),
+        ), row=3, col=2)
+        fig.add_vrect(x0=ql[0], x1=norm.ppf(0.05), fillcolor="rgba(248,81,73,0.08)", line_width=0, row=3, col=2)
+        fig.add_vrect(x0=norm.ppf(0.95), x1=ql[-1], fillcolor="rgba(248,81,73,0.08)", line_width=0, row=3, col=2)
+        fig.add_annotation(
+            xref="x8 domain",
+            yref="y8 domain",
+            x=0.98,
+            y=0.98,
+            text=f"Excess kurt={float(scipy_stats.kurtosis(terminal_r, fisher=True)):+.3f}",
+            showarrow=False,
+            align="right",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        ecdf_x = np.sort(finals)
+        ecdf_y = np.arange(1, len(ecdf_x) + 1) / len(ecdf_x)
+        surv_y = np.maximum(1 - np.arange(0, len(ecdf_x)) / len(ecdf_x), 1 / len(ecdf_x))
+        var_cdf = float(np.mean(finals <= var5_price))
+        var_surv = max(1 - var_cdf, 1 / len(ecdf_x))
+        fig.add_trace(go.Scatter(
+            x=ecdf_x, y=ecdf_y, mode="lines", name="ECDF",
+            line=dict(color=C["blue"], width=2.0, shape="hv"),
+            hovertemplate="At S(T)=$%{x:,.2f}, P(S(T) <= x)=%{y:.2%}<extra></extra>"
+        ), row=3, col=3, secondary_y=False)
+        fig.add_trace(go.Scatter(
+            x=ecdf_x, y=surv_y, mode="lines", name="Survival",
+            line=dict(color=C["red"], width=1.8, dash="dot", shape="hv"),
+            hovertemplate="At S(T)=$%{x:,.2f}, P(S(T) > x)=%{y:.2%}<extra></extra>"
+        ), row=3, col=3, secondary_y=True)
+        fig.add_vline(x=var5_price, line_color=C["amber"], line_dash="dash", line_width=1.6, row=3, col=3)
+        fig.add_hline(y=var_cdf, line_color=C["blue"], line_dash="dot", line_width=1.0, row=3, col=3)
+        fig.add_hline(y=var_surv, line_color=C["red"], line_dash="dot", line_width=1.0, row=3, col=3, secondary_y=True)
+        fig.add_annotation(
+            xref="x9 domain",
+            yref="y9 domain",
+            x=0.98,
+            y=0.98,
+            text=f"VaR95=${var5_price:,.0f}<br>CVaR95=${cvar5_price:,.0f}",
+            showarrow=False,
+            align="right",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        ret_terminal = finals / S0 - 1.0
+        pnl_terminal = finals - S0
+        alpha_levels = [0.90, 0.95, 0.99]
+        var_map = {a: float(np.quantile(ret_terminal, 1 - a)) for a in alpha_levels}
+        cvar_map = {
+            a: float(ret_terminal[ret_terminal <= var_map[a]].mean()) if np.any(ret_terminal <= var_map[a]) else float(var_map[a])
+            for a in alpha_levels
+        }
+        hist_sigma = float(self.eng.log_ret.std() * np.sqrt(252))
+        sim_sigma = float(np.std(ret_terminal))
+        kde_ret = scipy_stats.gaussian_kde(ret_terminal)
+        ret_x = np.linspace(ret_terminal.min(), ret_terminal.max(), 260)
+        ret_y = kde_ret(ret_x)
+        fig.add_trace(go.Histogram(
+            x=ret_terminal, nbinsx=60, histnorm="probability density", name="Terminal returns",
+            marker=dict(color=C["blue"], line=dict(width=0)), opacity=0.70,
+            hovertemplate="Return: %{x:.2%}<br>Density: %{y:.4f}<extra></extra>"
+        ), row=4, col=1)
+        fig.add_trace(go.Scatter(
+            x=ret_x, y=ret_y, mode="lines", name="Return KDE",
+            line=dict(color=C["cyan"], width=2.2),
+            hovertemplate="Return: %{x:.2%}<br>Density: %{y:.4f}<extra></extra>"
+        ), row=4, col=1)
+        fig.add_vrect(x0=ret_terminal.min(), x1=var_map[0.95], fillcolor="rgba(248,81,73,0.10)", line_width=0, row=4, col=1)
+        fig.add_vrect(x0=ret_terminal.min(), x1=var_map[0.99], fillcolor="rgba(248,81,73,0.18)", line_width=0, row=4, col=1)
+        fig.add_vline(x=var_map[0.95], line_color=C["amber"], line_dash="dash", line_width=1.8, row=4, col=1)
+        fig.add_vline(x=var_map[0.99], line_color=C["red"], line_dash="dot", line_width=1.8, row=4, col=1)
+        fig.add_annotation(
+            xref="x10 domain", yref="y10 domain", x=0.98, y=0.98,
+            text=(
+                f"alpha=95%<br>VaR={var_map[0.95]:.2%}<br>CVaR={cvar_map[0.95]:.2%}<br>"
+                f"Sharpe={st['sharpe']:+.2f}<br>E[r]/sigma={ret_terminal.mean()/(ret_terminal.std()+1e-12):+.2f}<br>"
+                f"hist sigma={hist_sigma:.1%}<br>sim sigma={sim_sigma:.1%}"
+            ),
+            showarrow=False, align="right",
+            bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        pcts = {p: float(np.percentile(finals, p)) for p in [1, 5, 25, 50, 75, 95, 99]}
+        fig.add_trace(go.Box(
+            q1=[pcts[25]], median=[pcts[50]], q3=[pcts[75]],
+            lowerfence=[pcts[5]], upperfence=[pcts[95]],
+            x=[pcts[50]], name="Percentile box", orientation="h",
+            marker_color=C["amber"], line=dict(color=C["amber"], width=2),
+            fillcolor="rgba(227,179,65,0.22)", boxpoints=False, showlegend=False,
+            hoverinfo="skip",
+        ), row=4, col=2)
+        pct_x = [pcts[1], pcts[5], pcts[25], pcts[50], pcts[75], pcts[95], pcts[99]]
+        pct_labels = ["P1", "P5", "P25", "P50", "P75", "P95", "P99"]
+        pct_colors = [C["red"], C["red"], C["amber"], C["green"], C["amber"], C["red"], C["red"]]
+        fig.add_trace(go.Scatter(
+            x=pct_x, y=[0]*len(pct_x), mode="markers+text", name="Percentiles",
+            marker=dict(color=pct_colors, size=[8,9,10,12,10,9,8], symbol="diamond"),
+            text=[f"{lab}<br>${val:,.0f}" for lab, val in zip(pct_labels, pct_x)],
+            textposition="top center",
+            hovertemplate="%{text}<extra></extra>",
+            showlegend=False,
+        ), row=4, col=2)
+
+        p10 = np.percentile(paths_arr, 10, axis=0)
+        p90 = np.percentile(paths_arr, 90, axis=0)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["95"], mode="lines",
+            line=dict(color="rgba(0,0,0,0)", width=0), showlegend=False, hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["5"], mode="lines", name="P5-P95 band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.12)",
+            line=dict(color="rgba(0,0,0,0)", width=0), hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=p90, mode="lines",
+            line=dict(color="rgba(0,0,0,0)", width=0), showlegend=False, hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=p10, mode="lines", name="P10-P90 band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.20)",
+            line=dict(color="rgba(0,0,0,0)", width=0), hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["75"], mode="lines",
+            line=dict(color="rgba(0,0,0,0)", width=0), showlegend=False, hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["25"], mode="lines", name="P25-P75 band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.30)",
+            line=dict(color="rgba(0,0,0,0)", width=0), hoverinfo="skip"
+        ), row=5, col=1)
+        fig.add_trace(go.Scatter(x=days, y=p10, mode="lines", name="Bear P10",
+                                 line=dict(color=C["red"], width=1.8, dash="dash"),
+                                 hovertemplate="Day %{x}: Bear=$%{y:,.2f}<extra></extra>"), row=5, col=1)
+        fig.add_trace(go.Scatter(x=days, y=st["bands"]["50"], mode="lines", name="Base P50",
+                                 line=dict(color=C["amber"], width=2.4),
+                                 hovertemplate="Day %{x}: Base=$%{y:,.2f}<extra></extra>"), row=5, col=1)
+        fig.add_trace(go.Scatter(x=days, y=p90, mode="lines", name="Bull P90",
+                                 line=dict(color=C["green"], width=1.8, dash="dash"),
+                                 hovertemplate="Day %{x}: Bull=$%{y:,.2f}<extra></extra>"), row=5, col=1)
+
+        rows_left = [
+            ("Last Close",   f"${S0:,.2f}"),
+            ("Drift  mu",     f"{self.eng.mu:+.2%}"),
+            ("Volatility sigma", f"{self.eng.sigma:.2%}"),
+            ("Sharpe",       f"{st['sharpe']:+.3f}"),
+            ("Sortino",      f"{st['sortino']:+.3f}"),
+            ("Calmar",       f"{st['calmar']:+.3f}"),
+            ("Win Rate",     f"{st['win_rate']:.1%}"),
+            ("Avg Win",      f"+${st['avg_win']:,.2f}"),
+            ("Mean stderr",  f"${st['mean_stderr']:,.4f}"),
+            ("P(Profit) SE", f"{st['prob_up_stderr']:.3%}"),
+        ]
+        rows_right = [
+            ("VaR 95%",     f"-${st['var95']:,.2f}"),
+            ("VaR 99%",     f"-${st['var99']:,.2f}"),
+            ("CVaR 95%",    f"-${st['cvar95']:,.2f}"),
+            ("P(Profit)",   f"{st['prob_up']:.1%}"),
+            ("P(Double)",   f"{st['prob_2x']:.1%}"),
+            ("P(Halve)",    f"{st['prob_half']:.1%}"),
+            ("Max DrawDn",  f"{st['hist_max_dd']:.2%}"),
+            ("Avg Loss",    f"-${st['avg_loss']:,.2f}"),
+            ("Conv slope",  f"{adv['convergence']['loglog_slope']:+.3f}" if adv else "n/a"),
+            ("Multi corr",  f"{adv['multi_asset_emp_corr']:+.3f}" if adv else "n/a"),
+        ]
+
+        if adv:
+            rows_left.extend([
+                ("Euro Pseudo", f"${adv['euro_plain']['price']:,.4f} ± {adv['euro_plain']['stderr']:.4f}"),
+                ("Euro Anti",   f"${adv['euro_antithetic']['price']:,.4f} ± {adv['euro_antithetic']['stderr']:.4f}"),
+                ("Euro QMC",    f"${adv['euro_qmc']['price']:,.4f} ± {adv['euro_qmc']['stderr']:.4f}"),
+                ("Euro CV",     f"${adv['euro_control_variate']['price']:,.4f} ± {adv['euro_control_variate']['stderr']:.4f}"),
+                ("Asian Call",  f"${adv['asian_call']['price']:,.4f} ± {adv['asian_call']['stderr']:.4f}"),
+                ("Barrier O/O", f"${adv['barrier_up_out_call']['price']:,.4f} ± {adv['barrier_up_out_call']['stderr']:.4f}"),
+                ("American Put", f"${adv['american_put_lsmc']['price']:,.4f} ± {adv['american_put_lsmc']['stderr']:.4f}"),
+            ])
+            rows_right.extend([
+                ("Delta",        f"{adv['pathwise_greeks']['delta']:+.4f} ± {adv['pathwise_greeks']['delta_stderr']:.4f}"),
+                ("Vega",         f"{adv['pathwise_greeks']['vega']:+.4f} ± {adv['pathwise_greeks']['vega_stderr']:.4f}"),
+                ("Rho",          f"{adv['pathwise_greeks']['rho']:+.4f} ± {adv['pathwise_greeks']['rho_stderr']:.4f}"),
+                ("Anti ratio",   f"{adv['variance_reduction_ratio_antithetic']:.3f}"),
+                ("QMC ratio",    f"{adv['variance_reduction_ratio_qmc']:.3f}"),
+                ("CV ratio",     f"{adv['variance_reduction_ratio_cv']:.3f}"),
+                ("BS call",      f"${adv['black_scholes_call']:,.4f}"),
+            ])
+
