@@ -770,6 +770,34 @@ class GBMEngine:
             "expected_slope": -0.5,
         }
 
+    def european_payoff_samples(
+        self,
+        K: float,
+        r: float = 0.05,
+        N: int = 252,
+        num_sim: int = 8000,
+        option_type: str = "call",
+        seed: int = 42,
+        random_method: str = "pseudo",
+        antithetic: bool = False,
+    ) -> np.ndarray:
+        paths, _ = self.simulate_risk_neutral(
+            r=r,
+            N=N,
+            num_sim=num_sim,
+            seed=seed,
+            random_method=random_method,
+            antithetic=antithetic,
+        )
+        T = N / 252.0
+        disc = np.exp(-r * T)
+        ST = paths[:, -1]
+        if option_type == "put":
+            payoff = np.maximum(K - ST, 0.0)
+        else:
+            payoff = np.maximum(ST - K, 0.0)
+        return disc * payoff
+
     def simulate_multi_asset_cholesky(
         self,
         S0_vec: np.ndarray,
@@ -885,679 +913,794 @@ class GBMEngine:
     
 
 
-
-############################################################################################################################################################################################
-
-
-# MATPLOTLIB DASHBOARD  - fully fixed layout, no overlaps
-class MatplotlibDashboard:
-    """
-    Layout (5 separate figures for maximum clarity):
-      Fig 1: Historical Price + Volume + RSI  (3-row tall chart)
-      Fig 2: Distribution + Log-Returns + QQ + Rolling Vol  (2x2)
-      Fig 3: MC Paths + Percentile Bands + Heatmap  (1x3)
-      Fig 4: Risk Metrics panel (full-width table)
-      Fig 5: 3D Surface
-    """
+class AdvancedMonteCarloExtensions:
+    """Educational Monte Carlo-only extensions layered on top of the core GBM engine."""
 
     def __init__(self, eng: GBMEngine):
         self.eng = eng
 
-    def fig_history(self, show=True):
-        h = self.eng.history
+    @staticmethod
+    def _nearest_psd_corr(mat: np.ndarray) -> np.ndarray:
+        sym = 0.5 * (mat + mat.T)
+        vals, vecs = np.linalg.eigh(sym)
+        vals = np.clip(vals, 1e-6, None)
+        psd = vecs @ np.diag(vals) @ vecs.T
+        d = np.sqrt(np.clip(np.diag(psd), 1e-12, None))
+        corr = psd / np.outer(d, d)
+        return np.clip(corr, -0.999, 0.999)
 
-        fig = plt.figure(figsize=(16, 11), facecolor=C["bg"])
-        fig.patch.set_facecolor(C["bg"])
+    @staticmethod
+    def _summary(samples: np.ndarray) -> dict:
+        arr = np.asarray(samples, dtype=float)
+        return {
+            "mean": float(np.mean(arr)),
+            "std": float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0,
+            "p05": float(np.percentile(arr, 5)),
+            "p50": float(np.percentile(arr, 50)),
+            "p95": float(np.percentile(arr, 95)),
+        }
 
-        gs = gridspec.GridSpec(3, 1, figure=fig,
-                               height_ratios=[4, 1.2, 1.2],
-                               hspace=0.45,
-                               left=0.08, right=0.96, top=0.88, bottom=0.08)
-
-        ax_p = fig.add_subplot(gs[0])
-        _style(ax_p)
-        ax_p.plot(h.index, h.values, color=C["blue"], lw=1.6, label="Close", zorder=4)
-        ax_p.fill_between(h.index, h.values, h.values.min(),
-                          alpha=0.08, color=C["blue"])
-
-        ma20  = h.rolling(20).mean()
-        ma50  = h.rolling(50).mean()
-        std20 = h.rolling(20).std()
-        ax_p.plot(h.index, ma20, color=C["purple"], lw=1.0, alpha=0.9, label="MA-20")
-        ax_p.plot(h.index, ma50, color=C["amber"],  lw=1.0, alpha=0.8, ls="--", label="MA-50")
-        ax_p.fill_between(h.index, ma20 + 2*std20, ma20 - 2*std20,
-                          alpha=0.08, color=C["purple"], label="BB +/-2sigma")
-
-        w52  = min(252, len(h))
-        hi52 = h.iloc[-w52:].max()
-        lo52 = h.iloc[-w52:].min()
-        _hline(ax_p, hi52, C["green"], f"52w H ${hi52:.0f}", lw=1.0, ls=":")
-        _hline(ax_p, lo52, C["red"],   f"52w L ${lo52:.0f}", lw=1.0, ls=":")
-
-        ax_p.yaxis.set_major_formatter(_dollar)
-        ax_p.set_title(f"{self.eng.ticker} - Historical Price - Bollinger Bands - MA-20/50",
-                       fontsize=9.5, color=C["title"], fontweight="bold", pad=8)
-        ax_p.legend(loc="upper left", ncol=4, fontsize=6)
-        ax_p.set_xticklabels([])
-        _tag(ax_p, f"{len(h)} trading days")
-
-        ax_v = fig.add_subplot(gs[1])
-        _style(ax_v)
-        vol = None
-        if HAS_YF:
-            try:
-                raw = yf.Ticker(self.eng.ticker).history(period="2y")
-                if "Volume" in raw.columns:
-                    vol = raw["Volume"].reindex(h.index).fillna(0)
-            except Exception:
-                pass
-        if vol is None:
-            rng2 = np.random.default_rng(7)
-            vol  = pd.Series(np.abs(rng2.standard_normal(len(h))) * 5e7 + 3e7, index=h.index)
-
-        colors = [C["green"] if v > 0 else C["red"] for v in h.pct_change().fillna(0)]
-        ax_v.bar(h.index, vol, color=colors, alpha=0.6, width=1.0)
-        ax_v.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{x/1e6:.0f}M"))
-        ax_v.set_ylabel("Volume", fontsize=7.5, color=C["muted"])
-        ax_v.set_xticklabels([])
-        _tag(ax_v, "Volume  -  green=up day  red=down day")
-
-        ax_r = fig.add_subplot(gs[2])
-        _style(ax_r)
-        delta = h.diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
-        rs    = gain / loss.replace(0, np.nan)
-        rsi   = 100 - 100 / (1 + rs)
-
-        ax_r.plot(h.index, rsi, color=C["cyan"], lw=1.2, label="RSI-14")
-        ax_r.axhline(70, color=C["red"],   lw=0.8, ls="--", alpha=0.7)
-        ax_r.axhline(30, color=C["green"], lw=0.8, ls="--", alpha=0.7)
-        ax_r.fill_between(h.index, rsi, 70, where=(rsi>=70), alpha=0.15, color=C["red"])
-        ax_r.fill_between(h.index, rsi, 30, where=(rsi<=30), alpha=0.15, color=C["green"])
-        ax_r.set_ylim(0, 100)
-        ax_r.set_yticks([30, 50, 70])
-        ax_r.set_ylabel("RSI", fontsize=7.5, color=C["muted"])
-        _tag(ax_r, "RSI-14 - overbought >70  oversold <30")
-
-        fig.suptitle(f"Historical Analysis - {self.eng.ticker}",
-                     fontsize=11, color=C["title"], fontweight="bold", y=0.93)
-
-        path_out = OUT / f"mc_history_{self.eng.ticker}.png"
-        plt.tight_layout(rect=[0, 0, 1, 0.94])
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] History chart -> [cyan]{path_out}[/cyan]")
-        if show: plt.show()
-        return fig
-
-    def fig_analysis(self, st: dict, show=True):
-        fig = plt.figure(figsize=(19, 12), facecolor=C["bg"])
-        fig.patch.set_facecolor(C["bg"])
-
-        gs = gridspec.GridSpec(2, 2, figure=fig,
-                               hspace=0.55, wspace=0.35,
-                               left=0.08, right=0.96, top=0.90, bottom=0.08)
-
-        ax_d = fig.add_subplot(gs[0, 0])
-        _style(ax_d)
-        S0, finals = st["S0"], st["finals"]
-
-        n, bins, patches = ax_d.hist(finals, bins=55, edgecolor="none", alpha=0.85, zorder=3)
-        mids = 0.5 * (bins[:-1] + bins[1:])
-        for patch, mid in zip(patches, mids):
-            if mid < S0:
-                t = np.clip((S0 - mid) / (S0 - finals.min() + 1e-9), 0, 1)
-                patch.set_facecolor(plt.cm.Reds(0.30 + 0.55*t))
+    def _simulate_rate_paths(
+        self,
+        model: str,
+        N: int,
+        num_sim: int,
+        seed: int,
+        r0: float = 0.03,
+        kappa: float = 1.4,
+        theta: float = 0.035,
+        eta: float = 0.09,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(seed)
+        dt = 1.0 / 252.0
+        rates = np.empty((num_sim, N + 1), dtype=float)
+        rates[:, 0] = r0
+        for i in range(N):
+            z = rng.standard_normal(num_sim)
+            rt = rates[:, i]
+            if model.lower() == "cir":
+                drift = kappa * (theta - np.maximum(rt, 0.0)) * dt
+                diff = eta * np.sqrt(np.maximum(rt, 1e-6)) * np.sqrt(dt) * z
+                rates[:, i + 1] = np.maximum(rt + drift + diff, 1e-6)
             else:
-                t = np.clip((mid - S0) / (finals.max() - S0 + 1e-9), 0, 1)
-                patch.set_facecolor(plt.cm.Greens(0.30 + 0.55*t))
+                rates[:, i + 1] = rt + kappa * (theta - rt) * dt + eta * np.sqrt(dt) * z
+        t = np.linspace(0.0, N / 252.0, N + 1)
+        return rates, t
 
-        kde_x = np.linspace(finals.min(), finals.max(), 400)
-        kde   = scipy_stats.gaussian_kde(finals)
-        scale = n.max() / kde(kde_x).max()
-        ax_d.plot(kde_x, kde(kde_x)*scale, color=C["cyan"], lw=2.0, zorder=5, label="KDE")
+    def simulate_jump_diffusion(
+        self,
+        N: int,
+        num_sim: int,
+        seed: int,
+        jump_lambda: float,
+        jump_mean: float,
+        jump_vol: float,
+        model: str = "merton",
+        drift: float | None = None,
+        sigma: float | None = None,
+        rate_paths: np.ndarray | None = None,
+    ) -> dict:
+        rng = np.random.default_rng(seed)
+        sigma = float(self.eng.sigma if sigma is None else sigma)
+        drift = float(self.eng.mu if drift is None else drift)
+        dt = (N / 252.0) / N
+        z_diff = rng.standard_normal((num_sim, N))
+        z_jump = rng.standard_normal((num_sim, N))
+        counts = rng.poisson(max(jump_lambda, 0.0) * dt, size=(num_sim, N))
+        jump_log = counts * jump_mean + np.sqrt(np.maximum(counts, 0.0)) * jump_vol * z_jump
+        if model.lower() == "jump_diffusion":
+            jump_rel = np.clip(jump_log, -0.9, 3.0)
+            gross_jump = np.maximum(1.0 + jump_rel, 0.05)
+            drift_grid = np.full((num_sim, N), drift)
+            if rate_paths is not None:
+                drift_grid = rate_paths[:, :-1]
+            inc = np.exp((drift_grid - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z_diff) * gross_jump
+            paths = np.concatenate(
+                [np.full((num_sim, 1), self.eng.S0), self.eng.S0 * np.cumprod(inc, axis=1)],
+                axis=1,
+            )
+        else:
+            compensator = jump_lambda * (np.exp(jump_mean + 0.5 * jump_vol**2) - 1.0)
+            drift_grid = np.full((num_sim, N), drift - compensator)
+            if rate_paths is not None:
+                drift_grid = rate_paths[:, :-1] - compensator
+            inc = (drift_grid - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * z_diff + jump_log
+            paths = self.eng.S0 * np.exp(
+                np.concatenate([np.zeros((num_sim, 1)), np.cumsum(inc, axis=1)], axis=1)
+            )
+        jump_mask = counts > 0
+        arrivals = np.cumsum(counts, axis=1)
+        t = np.linspace(0.0, N / 252.0, N + 1)
+        return {
+            "paths": paths,
+            "time": t,
+            "jump_counts": counts,
+            "jump_mask": jump_mask,
+            "jump_arrivals": arrivals,
+            "terminal": paths[:, -1],
+            "jump_frequency": float(np.mean(counts.sum(axis=1) / max(N / 252.0, 1e-9))),
+            "mean_jumps_per_path": float(np.mean(counts.sum(axis=1))),
+        }
 
-        _vline(ax_d, S0,           C["red"],   f"S0 ${S0:.2f}", lw=2.0)
-        _vline(ax_d, st["mean"],   C["green"], f"Mean ${st['mean']:.2f}", lw=2.0)
-        _vline(ax_d, st["median"], C["amber"], f"Median", lw=1.5, ls="-.")
+    @staticmethod
+    def _brownian_bridge_path(z_increments: np.ndarray, bridge_noise: np.ndarray) -> np.ndarray:
+        n = len(z_increments)
+        dt = 1.0 / n
+        w = np.full(n + 1, np.nan, dtype=float)
+        w[0] = 0.0
+        w[-1] = float(np.sum(z_increments) * np.sqrt(dt))
+        noise_idx = 0
 
-        top = ax_d.get_ylim()[1]
-        for lbl, val in [("5th", st["terminal_pct"]["5"]), ("95th", st["terminal_pct"]["95"])]:
-            ax_d.axvline(val, color=C["border"], lw=1.0, ls=":", alpha=0.9)
-            ax_d.text(val, top*0.92, f"{lbl}\n${val:.0f}",
-                      color=C["muted"], fontsize=6, ha="center",
-                      bbox=dict(fc=C["bg2"], ec=C["border"], alpha=0.9, pad=1.5))
+        def fill(left: int, right: int):
+            nonlocal noise_idx
+            if right - left <= 1:
+                return
+            mid = (left + right) // 2
+            tl = left * dt
+            tr = right * dt
+            tm = mid * dt
+            mean = ((tr - tm) * w[left] + (tm - tl) * w[right]) / max(tr - tl, 1e-12)
+            var = max((tm - tl) * (tr - tm) / max(tr - tl, 1e-12), 0.0)
+            w[mid] = mean + np.sqrt(var) * bridge_noise[noise_idx]
+            noise_idx += 1
+            fill(left, mid)
+            fill(mid, right)
 
-        ax2 = ax_d.twiny()
-        ax2.set_xlim(ax_d.get_xlim())
-        ax2.set_facecolor(C["bg"])
-        ticks = ax_d.get_xticks()
-        ax2.set_xticks(ticks)
-        ax2.set_xticklabels([f"{(x-S0)/S0:+.0%}" for x in ticks], fontsize=6, color=C["muted"])
-        for sp in ax2.spines.values(): sp.set_color(C["border"])
-        ax_d.xaxis.set_major_formatter(_dollar)
-        ax_d.set_title("Final Price Distribution - 1-Year Forecast", fontsize=9, pad=4)
-        ax_d.legend(loc="upper right", ncol=2, fontsize=6)
-        ax_d.set_xlabel("Price ($)", fontsize=7.5, color=C["muted"])
-        _tag(ax_d, f"P(profit) = {st['prob_up']:.1%} - {len(finals)} sims")
+        fill(0, n)
+        for idx in range(1, n):
+            if not np.isfinite(w[idx]):
+                w[idx] = np.interp(idx * dt, [0.0, 1.0], [w[0], w[-1]])
+        return w
 
-        ax_lr = fig.add_subplot(gs[0, 1])
-        _style(ax_lr)
-        lr = self.eng.log_ret.values
-        ax_lr.hist(lr, bins=65, color=C["cyan"], alpha=0.65, edgecolor="none",
-                   density=True, label="Log-returns")
-        mu_r, sd_r = lr.mean(), lr.std()
-        x = np.linspace(lr.min(), lr.max(), 300)
-        ax_lr.plot(x, norm.pdf(x, mu_r, sd_r), color=C["amber"], lw=2.0, label="Normal fit")
-        df_t, loc_t, scale_t = t_dist.fit(lr)
-        ax_lr.plot(x, t_dist.pdf(x, df_t, loc_t, scale_t),
-                   color=C["purple"], lw=1.6, ls="--", label=f"t-fit (nu={df_t:.1f})")
-        ax_lr.axvline(0, color=C["muted"], lw=0.8, ls=":")
-        ax_lr.xaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:.1%}"))
-        ax_lr.set_title("Log-Return Distribution", fontsize=9, pad=4)
-        ax_lr.legend(loc="upper right", fontsize=6)
-        _tag(ax_lr, f"skew={st['lr_skew']:+.2f} kurt={st['lr_kurt']:+.2f} JB={st['jb_p']:.3f}")
+    def _barrier_bridge_survival(self, paths: np.ndarray, barrier: float, sigma: float, dt: float) -> np.ndarray:
+        left = paths[:, :-1]
+        right = paths[:, 1:]
+        crossed = (left >= barrier) | (right >= barrier)
+        safe_left = np.clip(barrier / np.maximum(left, 1e-9), 1.0, None)
+        safe_right = np.clip(barrier / np.maximum(right, 1e-9), 1.0, None)
+        exponent = -2.0 * np.log(safe_left) * np.log(safe_right) / max(sigma * sigma * dt, 1e-12)
+        hit_prob = np.exp(np.clip(exponent, -50, 20))
+        hit_prob = np.where(crossed, 1.0, np.clip(hit_prob, 0.0, 1.0))
+        survival = np.prod(1.0 - hit_prob, axis=1)
+        return np.clip(survival, 0.0, 1.0)
 
-        ax_acf = fig.add_subplot(gs[1, 0])
-        _style(ax_acf)
-        max_lag = min(30, len(lr) - 2)
-        lags = np.arange(1, max_lag + 1)
-        acf_vals = []
-        lr_center = lr - lr.mean()
-        denom = np.sum(lr_center**2) + 1e-12
-        for lag in lags:
-            num = np.sum(lr_center[:-lag] * lr_center[lag:])
-            acf_vals.append(float(num / denom))
-        conf = 1.96 / np.sqrt(len(lr))
-        ax_acf.bar(lags, acf_vals, color=C["blue"], alpha=0.75, width=0.75)
-        _hline(ax_acf, 0.0, C["muted"], lw=1.0, ls="-")
-        _hline(ax_acf, conf, C["red"], lw=1.0, ls=":")
-        _hline(ax_acf, -conf, C["red"], lw=1.0, ls=":")
-        ax_acf.set_title("Return Autocorrelation (ACF)", fontsize=9, pad=4)
-        ax_acf.set_xlabel("Lag", fontsize=7.5, color=C["muted"])
-        ax_acf.set_ylabel("ACF", fontsize=7.5, color=C["muted"])
-        _tag(ax_acf, "dotted bounds: ~95% white-noise interval")
+    def _dynamic_multi_asset_paths(
+        self,
+        N: int,
+        num_sim: int,
+        seed: int,
+        base_corr: np.ndarray,
+        stress_bump: np.ndarray,
+    ) -> dict:
+        rng = np.random.default_rng(seed)
+        d = base_corr.shape[0]
+        S0_vec = np.array([self.eng.S0, self.eng.S0 * 0.96, self.eng.S0 * 1.04], dtype=float)
+        mu_vec = np.array([self.eng.mu, self.eng.mu * 0.92, self.eng.mu * 1.05], dtype=float)
+        sigma_vec = np.array([self.eng.sigma, self.eng.sigma * 1.08, self.eng.sigma * 0.9], dtype=float)
+        dt = (N / 252.0) / N
+        t = np.linspace(0.0, N / 252.0, N + 1)
+        stress_curve = 0.55 * np.exp(-((np.arange(N) - 0.68 * N) / max(0.16 * N, 1.0)) ** 2) - 0.12
+        stress_curve += 0.16 * np.sin(np.linspace(0, 2 * np.pi, N))
+        stress_curve = np.clip(stress_curve, -0.25, 0.65)
+        corr_track = np.empty((N, d, d), dtype=float)
+        dyn_paths = np.empty((num_sim, N + 1, d), dtype=float)
+        dyn_paths[:, 0, :] = S0_vec
+        static_paths = np.empty_like(dyn_paths)
+        static_paths[:, 0, :] = S0_vec
+        static_chol = np.linalg.cholesky(self._nearest_psd_corr(base_corr))
+        for i in range(N):
+            corr_t = self._nearest_psd_corr(base_corr + stress_curve[i] * stress_bump)
+            corr_track[i] = corr_t
+            chol_t = np.linalg.cholesky(corr_t)
+            z_dyn = rng.standard_normal((num_sim, d)) @ chol_t.T
+            z_static = rng.standard_normal((num_sim, d)) @ static_chol.T
+            drift = (mu_vec - 0.5 * sigma_vec**2) * dt
+            dyn_paths[:, i + 1, :] = dyn_paths[:, i, :] * np.exp(drift + sigma_vec * np.sqrt(dt) * z_dyn)
+            static_paths[:, i + 1, :] = static_paths[:, i, :] * np.exp(drift + sigma_vec * np.sqrt(dt) * z_static)
+        basket_dyn = dyn_paths[:, -1, :].mean(axis=1)
+        basket_static = static_paths[:, -1, :].mean(axis=1)
+        return {
+            "time": t.tolist(),
+            "stress_curve": stress_curve.tolist(),
+            "corr_12": corr_track[:, 0, 1].tolist(),
+            "corr_13": corr_track[:, 0, 2].tolist(),
+            "corr_23": corr_track[:, 1, 2].tolist(),
+            "basket_dynamic": self._summary(basket_dyn),
+            "basket_static": self._summary(basket_static),
+            "basket_dynamic_samples": basket_dyn[:800].tolist(),
+            "basket_static_samples": basket_static[:800].tolist(),
+        }
 
-        ax_vol = fig.add_subplot(gs[1, 1])
-        _style(ax_vol)
-        rv = self.eng.roll_vol if self.eng.roll_vol is not None else self.eng.log_ret.rolling(30).std() * np.sqrt(252)
-        q25 = float(rv.quantile(0.25))
-        q75 = float(rv.quantile(0.75))
-        ax_vol.plot(rv.index, rv.values, color=C["amber"], lw=1.4, label="30d rolling vol")
-        ax_vol.fill_between(rv.index, 0, rv.values, alpha=0.10, color=C["amber"])
-        ax_vol.fill_between(rv.index, 0, rv.values, where=(rv.values >= q75),
-                    alpha=0.13, color=C["red"], label="High-vol regime")
-        ax_vol.fill_between(rv.index, 0, rv.values, where=(rv.values <= q25),
-                    alpha=0.10, color=C["green"], label="Low-vol regime")
-        ax_vol.axhline(self.eng.sigma, color=C["purple"], lw=1.4, ls="--",
-                       label=f"Full-period sigma={self.eng.sigma:.1%}")
-        ax_vol.yaxis.set_major_formatter(_pct)
-        ax_vol.set_title("Rolling 30-Day Volatility", fontsize=9, pad=4)
-        ax_vol.legend(loc="upper right", fontsize=6)
-        _tag(ax_vol, "volatility clustering visible")
+    def _adaptive_simulation(self, N: int, num_sim: int, seed: int, jump_lambda: float) -> dict:
+        dt = (N / 252.0) / N
+        barrier = 1.18 * self.eng.S0
+        K = self.eng.S0
+        r = 0.05
 
-        fig.suptitle(f"Statistical Analysis - {self.eng.ticker}",
-                     fontsize=11, color=C["title"], fontweight="bold", y=0.96)
+        def run(mode: str, rng_seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+            rng = np.random.default_rng(rng_seed)
+            paths = np.empty((num_sim, N + 1), dtype=float)
+            paths[:, 0] = self.eng.S0
+            steps = np.ones((num_sim, N), dtype=int)
+            counts_book = np.zeros((num_sim, N), dtype=int)
+            for i in range(N):
+                counts = rng.poisson(jump_lambda * dt, size=num_sim)
+                stress = np.abs(rng.standard_normal(num_sim)) + 1.8 * counts
+                if mode == "adaptive":
+                    sub = np.clip(1 + (stress > 0.8).astype(int) + (stress > 1.5).astype(int) + 2 * counts, 1, 6)
+                elif mode == "reference":
+                    sub = np.full(num_sim, 6, dtype=int)
+                else:
+                    sub = np.ones(num_sim, dtype=int)
+                steps[:, i] = sub
+                counts_book[:, i] = counts
+                next_vals = np.empty(num_sim, dtype=float)
+                for j in range(num_sim):
+                    price = paths[j, i]
+                    m = int(sub[j])
+                    sub_dt = dt / m
+                    jump_count = counts[j]
+                    for k in range(m):
+                        z = rng.standard_normal()
+                        jump_now = jump_count > 0 and k == m // 2
+                        jump_term = (-0.04 + 0.18 * rng.standard_normal()) if jump_now else 0.0
+                        price *= np.exp((self.eng.mu - 0.5 * self.eng.sigma**2) * sub_dt + self.eng.sigma * np.sqrt(sub_dt) * z + jump_term)
+                    next_vals[j] = price
+                paths[:, i + 1] = next_vals
+            return paths, steps, counts_book
 
-        path_out = OUT / f"mc_analysis_{self.eng.ticker}.png"
-        plt.tight_layout(rect=[0, 0, 1, 0.94])
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] Analysis chart -> [cyan]{path_out}[/cyan]")
-        if show: plt.show()
-        return fig
+        start = perf_counter()
+        fixed_paths, fixed_steps, fixed_counts = run("fixed", seed + 1)
+        fixed_runtime = perf_counter() - start
+        start = perf_counter()
+        adaptive_paths, adaptive_steps, adaptive_counts = run("adaptive", seed + 2)
+        adaptive_runtime = perf_counter() - start
+        start = perf_counter()
+        ref_paths, _, _ = run("reference", seed + 3)
+        ref_runtime = perf_counter() - start
 
-    def fig_simulation(self, st: dict, show=True):
-        fig = plt.figure(figsize=(24, 9), facecolor=C["bg"])
-        fig.patch.set_facecolor(C["bg"])
+        def barrier_price(paths: np.ndarray) -> float:
+            alive = paths.max(axis=1) < barrier
+            payoff = np.maximum(paths[:, -1] - K, 0.0) * alive.astype(float)
+            return float(np.exp(-r * N / 252.0) * payoff.mean())
 
-        gs = gridspec.GridSpec(1, 3, figure=fig,
-                               wspace=0.35,
-                               left=0.06, right=0.96, top=0.92, bottom=0.10)
+        price_ref = barrier_price(ref_paths)
+        price_fixed = barrier_price(fixed_paths)
+        price_adaptive = barrier_price(adaptive_paths)
+        sample_idx = int(np.argmax(adaptive_steps.sum(axis=1)))
+        return {
+            "fixed": {
+                "runtime_ms": 1000.0 * fixed_runtime,
+                "barrier_price": price_fixed,
+                "abs_error_vs_ref": abs(price_fixed - price_ref),
+            },
+            "adaptive": {
+                "runtime_ms": 1000.0 * adaptive_runtime,
+                "barrier_price": price_adaptive,
+                "abs_error_vs_ref": abs(price_adaptive - price_ref),
+            },
+            "reference": {
+                "runtime_ms": 1000.0 * ref_runtime,
+                "barrier_price": price_ref,
+            },
+            "sample_step_schedule": adaptive_steps[sample_idx].tolist(),
+            "sample_jump_counts": adaptive_counts[sample_idx].tolist(),
+            "sample_path": adaptive_paths[sample_idx].tolist(),
+            "sample_fixed_path": fixed_paths[sample_idx].tolist(),
+        }
 
-        ax_p = fig.add_subplot(gs[0])
-        self._draw_paths(ax_p, st)
-
-        ax_b = fig.add_subplot(gs[1])
-        self._draw_bands(ax_b, st)
-
-        ax_h = fig.add_subplot(gs[2])
-        self._draw_heatmap(ax_h, st)
-
-        fig.suptitle(f"Monte Carlo Simulation - {self.eng.ticker} - "
-                     f"{st['paths'].shape[0]} sims x {st['paths'].shape[1]-1} days",
-                     fontsize=10, color=C["title"], fontweight="bold", y=0.98)
-
-        path_out = OUT / f"mc_simulation_{self.eng.ticker}.png"
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] Simulation chart -> [cyan]{path_out}[/cyan]")
-        if show: plt.show()
-        return fig
-
-    def _draw_paths(self, ax, st, max_show=80):
-        _style(ax)
-        S0, paths = st["S0"], st["paths"]
-        N    = paths.shape[1] - 1
-        days = np.arange(N + 1)
-        rng  = np.random.default_rng(0)
-        idx  = rng.choice(len(paths), min(max_show, len(paths)), replace=False)
-
-        ax.fill_between(days, st["bands"]["5"], st["bands"]["95"],
-                        alpha=0.07, color=C["blue"], label="5-95%")
-        ax.fill_between(days, st["bands"]["25"], st["bands"]["75"],
-                        alpha=0.13, color=C["blue"], label="25-75%")
-
-        for i in idx:
-            f = paths[i, -1]
-            if   f > S0 * 1.5:  col, a = C["green"], 0.25
-            elif f < S0 * 0.65: col, a = C["red"],   0.25
-            else:               col, a = C["muted"],  0.07
-            ax.plot(days, paths[i], color=col, alpha=a, lw=0.5)
-
-        best_i  = int(paths[:, -1].argmax())
-        worst_i = int(paths[:, -1].argmin())
-        ax.plot(days, paths[best_i],  color=C["green"], lw=1.5, alpha=0.9,
-                label=f"Best ${paths[best_i,-1]:.0f}")
-        ax.plot(days, paths[worst_i], color=C["red"],   lw=1.5, alpha=0.9,
-                label=f"Worst ${paths[worst_i,-1]:.0f}")
-        ax.plot(days, st["mean_path"], color=C["amber"], lw=2.5,
-                label=f"Mean ${st['mean_path'][-1]:.0f}", zorder=10)
-        _hline(ax, S0, C["red"], f"S0 ${S0:.2f}", lw=1.5)
-
-        mf = st["mean_path"][-1]
-        ax.annotate(f" ${mf:.0f}", xy=(N, mf), color=C["amber"], fontsize=7.5,
-                    fontweight="bold", va="center")
-
-        ax.yaxis.set_major_formatter(_dollar)
-        ax.set_xlabel("Trading Days", fontsize=7.5, color=C["muted"])
-        ax.set_title("MC Paths & Confidence Bands", fontsize=9, pad=4)
-        ax.legend(loc="lower left", ncol=2, fontsize=6)
-        _tag(ax, f"{len(paths)} paths - {N}d")
-
-    def _draw_bands(self, ax, st):
-        _style(ax)
-        S0   = st["S0"]
-        N    = st["paths"].shape[1]
-        days = np.arange(N)
-        T    = N / 252.0
-        t_arr = np.linspace(0, T, N)
-
-        ax.fill_between(days, st["bands"]["5"],  st["bands"]["95"],
-                        alpha=0.10, color=C["blue"], label="5-95%")
-        ax.fill_between(days, st["bands"]["10"], st["bands"]["90"],
-                        alpha=0.08, color=C["blue"])
-        ax.fill_between(days, st["bands"]["25"], st["bands"]["75"],
-                        alpha=0.18, color=C["blue"], label="25-75%")
-
-        ax.plot(days, st["bands"]["95"], color=C["green"], lw=1.2, ls="--", alpha=0.9)
-        ax.plot(days, st["bands"]["75"], color=C["green"], lw=0.8, ls="--", alpha=0.55)
-        ax.plot(days, st["bands"]["50"], color=C["amber"], lw=2.2, label="Median")
-        ax.plot(days, st["bands"]["25"], color=C["red"],   lw=0.8, ls="--", alpha=0.55)
-        ax.plot(days, st["bands"]["5"],  color=C["red"],   lw=1.2, ls="--", alpha=0.9)
-
-        e_path = S0 * np.exp(self.eng.mu * t_arr)
-        ax.plot(days, e_path, color=C["purple"], lw=1.6, ls=":", label="E[S_t]", zorder=9)
-        _hline(ax, S0, C["muted"], lw=1.2, ls=":")
-
-        ax.fill_between(days, st["bands"]["5"], S0,
-                        where=(st["bands"]["5"] < S0), alpha=0.07, color=C["red"])
-
-        for key, col in [("95", C["green"]), ("50", C["amber"]), ("5", C["red"])]:
-            v = st["bands"][key][-1]
-            ax.text(N-1, v, f" ${v:.0f}", color=col, fontsize=7, va="center")
-
-        ax.yaxis.set_major_formatter(_dollar)
-        ax.set_xlabel("Trading Days", fontsize=7.5, color=C["muted"])
-        ax.set_title("Percentile Bands 5/25/50/75/95", fontsize=9, pad=4)
-        ax.legend(loc="lower left", ncol=2, fontsize=6)
-        _tag(ax, "E[S_t] = S0-exp(mut)")
-
-    def _draw_heatmap(self, ax, st):
-        _style(ax, grid=False)
-        paths = st["paths"]
-        N     = paths.shape[1]
-        pmin  = paths.min() * 0.96
-        pmax  = paths.max() * 1.04
-        pbins = np.linspace(pmin, pmax, 80)
-        stride = max(1, N // 120)
-        t_idx  = np.arange(0, N, stride)
-
-        hm = np.zeros((len(pbins)-1, len(t_idx)))
-        for col, t in enumerate(t_idx):
-            c, _ = np.histogram(paths[:, t], bins=pbins)
-            col_max = c.max()
-            hm[:, col] = c / col_max if col_max > 0 else c
-
-        cmap = LinearSegmentedColormap.from_list(
-            "terminal",
-            [C["bg"], "#0f2d4a", "#1f6feb", C["cyan"], C["green"], C["amber"], "#ffd700"]
+    def _importance_sampling_experiment(self, N: int, num_sim: int, seed: int) -> dict:
+        T = N / 252.0
+        dt = T / N
+        K = 1.35 * self.eng.S0
+        theta = 0.38
+        r = 0.05
+        rng_std = np.random.default_rng(seed + 1)
+        z_std = rng_std.standard_normal((num_sim, N))
+        paths_std = self.eng.S0 * np.exp(
+            np.concatenate(
+                [np.zeros((num_sim, 1)), np.cumsum((r - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * z_std, axis=1)],
+                axis=1,
+            )
         )
-        im = ax.imshow(hm, aspect="auto", cmap=cmap, origin="lower",
-                       extent=[0, N-1, pmin, pmax],
-                       alpha=0.95, interpolation="bilinear")
+        pv_std = np.exp(-r * T) * np.maximum(paths_std[:, -1] - K, 0.0)
 
-        days = np.arange(N)
-        ax.plot(days, st["mean_path"], color="white", lw=2.5, zorder=5, label="Mean")
-        ax.plot(days, st["bands"]["5"],  color=C["red"],   lw=1.2, ls="--", alpha=0.85, label="5th")
-        ax.plot(days, st["bands"]["95"], color=C["green"], lw=1.2, ls="--", alpha=0.85, label="95th")
-        _hline(ax, st["S0"], "white", lw=1.0, ls=":", alpha=0.5)
+        rng_is = np.random.default_rng(seed + 2)
+        y = rng_is.standard_normal((num_sim, N)) + theta
+        weights = np.exp(-theta * np.sum(y, axis=1) + 0.5 * N * theta * theta)
+        paths_is = self.eng.S0 * np.exp(
+            np.concatenate(
+                [np.zeros((num_sim, 1)), np.cumsum((r - 0.5 * self.eng.sigma**2) * dt + self.eng.sigma * np.sqrt(dt) * y, axis=1)],
+                axis=1,
+            )
+        )
+        pv_is = np.exp(-r * T) * np.maximum(paths_is[:, -1] - K, 0.0) * weights
 
-        ax.yaxis.set_major_formatter(_dollar)
-        ax.set_xlabel("Trading Days", fontsize=7.5, color=C["muted"])
-        ax.set_title("Path Density Heatmap", fontsize=9, pad=4)
-        ax.legend(loc="lower right", fontsize=6)
-        cb = plt.colorbar(im, ax=ax, fraction=0.028, pad=0.02)
-        cb.set_label("Density", color=C["muted"], fontsize=7)
-        cb.ax.yaxis.set_tick_params(color=C["muted"])
-        plt.setp(cb.ax.yaxis.get_ticklabels(), color=C["muted"], fontsize=6)
-        _tag(ax, "brighter = higher concentration")
+        running_n = np.arange(1, num_sim + 1, dtype=float)
+        run_std = np.cumsum(pv_std) / running_n
+        run_is = np.cumsum(pv_is) / running_n
+        hit_std = float(np.mean(paths_std[:, -1] > K))
+        hit_is = float(np.mean(paths_is[:, -1] > K))
+        ess = float((weights.sum() ** 2) / (np.sum(weights * weights) + 1e-12))
+        return {
+            "strike": float(K),
+            "theta": theta,
+            "standard_price": float(np.mean(pv_std)),
+            "is_price": float(np.mean(pv_is)),
+            "standard_stderr": float(np.std(pv_std, ddof=1) / np.sqrt(num_sim)),
+            "is_stderr": float(np.std(pv_is, ddof=1) / np.sqrt(num_sim)),
+            "variance_ratio": float((np.var(pv_is, ddof=1) + 1e-12) / (np.var(pv_std, ddof=1) + 1e-12)),
+            "standard_hit_ratio": hit_std,
+            "is_hit_ratio": hit_is,
+            "effective_sample_size": ess,
+            "running_standard": run_std[:1200].tolist(),
+            "running_is": run_is[:1200].tolist(),
+        }
 
-    def fig_risk(self, st: dict, N: int, show=True):
-        fig = plt.figure(figsize=(19, 8), facecolor=C["bg2"])
-        fig.patch.set_facecolor(C["bg2"])
+    def build_report(self, N: int, num_sim: int, seed: int) -> dict:
+        horizon = min(max(42, N), 126)
+        sample_paths = min(max(120, num_sim // 2), 320)
+        jump_grid_lambda = [0.0, 0.35, 0.8]
+        jump_grid_mean = [-0.06, 0.0, 0.06]
+        jump_grid_vol = [0.12, 0.28]
+        jump_scenarios = []
+        scenario_id = 0
+        for model in ["jump_diffusion", "merton"]:
+            for lam in jump_grid_lambda:
+                for jmu in jump_grid_mean:
+                    for jvol in jump_grid_vol:
+                        sim = self.simulate_jump_diffusion(
+                            N=horizon,
+                            num_sim=sample_paths,
+                            seed=seed + 300 + scenario_id,
+                            jump_lambda=lam,
+                            jump_mean=jmu,
+                            jump_vol=jvol,
+                            model=model,
+                        )
+                        paths = sim["paths"][:6]
+                        jump_points = []
+                        for idx in range(min(3, len(paths))):
+                            hit_idx = np.where(sim["jump_mask"][idx])[0]
+                            jump_points.append({
+                                "x": sim["time"][hit_idx + 1].tolist(),
+                                "y": paths[idx, hit_idx + 1].tolist(),
+                            })
+                        jump_scenarios.append({
+                            "id": scenario_id,
+                            "model": model,
+                            "lambda": lam,
+                            "jump_mean": jmu,
+                            "jump_vol": jvol,
+                            "time": sim["time"].tolist(),
+                            "paths": [row.tolist() for row in paths],
+                            "jump_points": jump_points,
+                            "terminal_summary": self._summary(sim["terminal"]),
+                            "jump_frequency": sim["jump_frequency"],
+                            "mean_jumps_per_path": sim["mean_jumps_per_path"],
+                        })
+                        scenario_id += 1
 
-        ax = fig.add_subplot(111)
-        ax.axis("off")
-        ax.set_facecolor(C["bg2"])
+        rate_payload = {}
+        for idx, model in enumerate(["vasicek", "cir"]):
+            rates, t = self._simulate_rate_paths(model=model, N=horizon, num_sim=360, seed=seed + 700 + idx)
+            coupled = self.simulate_jump_diffusion(
+                N=horizon,
+                num_sim=360,
+                seed=seed + 710 + idx,
+                jump_lambda=0.25,
+                jump_mean=-0.03,
+                jump_vol=0.15,
+                model="merton",
+                rate_paths=rates,
+            )
+            rate_payload[model] = {
+                "time": t.tolist(),
+                "rate_p10": np.percentile(rates, 10, axis=0).tolist(),
+                "rate_p50": np.percentile(rates, 50, axis=0).tolist(),
+                "rate_p90": np.percentile(rates, 90, axis=0).tolist(),
+                "stock_p10": np.percentile(coupled["paths"], 10, axis=0).tolist(),
+                "stock_p50": np.percentile(coupled["paths"], 50, axis=0).tolist(),
+                "stock_p90": np.percentile(coupled["paths"], 90, axis=0).tolist(),
+            }
 
-        metrics_left = [
-            ("VaR 95%",        f"-${st['var95']:,.2f}",          C["red"]),
-            ("VaR 99%",        f"-${st['var99']:,.2f}",          C["red"]),
-            ("CVaR 95%",       f"-${st['cvar95']:,.2f}",         C["red"]),
-            ("CVaR 99%",       f"-${st['cvar99']:,.2f}",         C["red"]),
-            ("Hist Max DD",    f"{st['hist_max_dd']:.2%}",       C["red"]),
-            ("Sim Avg Max DD", f"{st['sim_max_dd']:.2%}",        C["red"]),
-        ]
-        metrics_mid = [
-            ("Sharpe Ratio",  f"{st['sharpe']:+.3f}",
-             C["green"] if st["sharpe"] > 1 else C["amber"] if st["sharpe"] > 0 else C["red"]),
-            ("Sortino Ratio", f"{st['sortino']:+.3f}",
-             C["green"] if st["sortino"] > 1 else C["amber"] if st["sortino"] > 0 else C["red"]),
-            ("Calmar Ratio",  f"{st['calmar']:+.3f}",
-             C["green"] if st["calmar"] > 0.5 else C["amber"]),
-            ("Win Rate",      f"{st['win_rate']:.1%}",
-             C["green"] if st["win_rate"] > 0.5 else C["red"]),
-            ("Avg Win",       f"+${st['avg_win']:,.2f}",         C["green"]),
-            ("Avg Loss",      f"-${st['avg_loss']:,.2f}",        C["red"]),
-        ]
-        metrics_right = [
-            ("P(Profit)",     f"{st['prob_up']:.1%}",
-             C["green"] if st["prob_up"] > 0.5 else C["red"]),
-            ("P(Double)",     f"{st['prob_2x']:.1%}",            C["purple"]),
-            ("P(Halve)",      f"{st['prob_half']:.1%}",          C["red"]),
-            ("Mean Target",   f"${st['mean']:,.2f}",
-             C["green"] if st["mean"] > st["S0"] else C["red"]),
-            ("Mean +- MCSE",  f"${st['mean']:,.2f} +- ${st['mean_stderr']:.2f}", C["cyan"]),
-            ("5th Pctile",    f"${st['terminal_pct']['5']:,.2f}",         C["red"]),
-            ("95th Pctile",   f"${st['terminal_pct']['95']:,.2f}",        C["green"]),
-        ]
-
-        # header row
-        ax.text(0.5, 0.96, "RISK  &  PERFORMANCE  METRICS",
-                transform=ax.transAxes, ha="center", va="top",
-                fontsize=14, fontweight="bold", color=C["title"], fontfamily="monospace")
-
-        # subheaders
-        info = (f"{self.eng.ticker} - S0=${self.eng.S0:,.2f} - "
-                f"mu={self.eng.mu:+.2%} - sigma={self.eng.sigma:.2%} - "
-                f"{st['paths'].shape[0]} sims - {N}d horizon")
-        ax.text(0.5, 0.86, info, transform=ax.transAxes, ha="center", va="top",
-                fontsize=8.5, color=C["muted"], fontfamily="monospace")
-
-        ax.plot([0.02, 0.98], [0.80, 0.80], color=C["border"], lw=0.8,
-                transform=ax.transAxes)
-
-        col_groups = [metrics_left, metrics_mid, metrics_right]
-        col_titles = ["RISK METRICS", "PERFORMANCE RATIOS", "PROBABILITIES"]
-        col_colors = [C["red"], C["amber"], C["purple"]]
-        col_xs     = [0.18, 0.50, 0.83]
-
-        for col_x, title, metrics, tcol in zip(col_xs, col_titles, col_groups, col_colors):
-            ax.text(col_x, 0.77, title, transform=ax.transAxes, ha="center",
-                    fontsize=8.5, color=tcol, fontweight="bold", fontfamily="monospace")
-
-            for i, (label, value, col) in enumerate(metrics):
-                y = 0.68 - i * 0.11
-                ax.text(col_x, y, label, transform=ax.transAxes, ha="center",
-                        fontsize=7.5, color=C["muted"], fontfamily="monospace")
-                ax.text(col_x, y - 0.055, value, transform=ax.transAxes, ha="center",
-                        fontsize=12, color=col, fontweight="bold", fontfamily="monospace")
-
-        # bottom separator + parameter summary
-        ax.plot([0.02, 0.98], [0.05, 0.05], color=C["border"], lw=0.8,
-                transform=ax.transAxes)
-        bottom = (f"log-return skew={st['lr_skew']:+.2f}  -  "
-                  f"excess kurt={st['lr_kurt']:+.2f}  -  "
-                  f"JB p={st['jb_p']:.4f}  -  "
-                  f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        ax.text(0.5, 0.02, bottom, transform=ax.transAxes, ha="center",
-                fontsize=7.5, color=C["muted"], fontfamily="monospace")
-
-        path_out = OUT / f"mc_risk_{self.eng.ticker}.png"
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg2"])
-        rlog(f"  [green]OK[/green] Risk table -> [cyan]{path_out}[/cyan]")
-        if show: plt.show()
-        return fig
-
-    def fig_mc_summary(self, adv: dict, show=True):
-        fig = plt.figure(figsize=(18, 10), facecolor=C["bg"])
-        fig.patch.set_facecolor(C["bg"])
-
-        ax = fig.add_subplot(111)
-        ax.axis("off")
-        ax.set_facecolor(C["bg"])
-
-        left = [
-            ("European Call (pseudo)", f"${adv['euro_plain']['price']:,.4f} ± {adv['euro_plain']['stderr']:.4f}"),
-            ("European Call (anti)", f"${adv['euro_antithetic']['price']:,.4f} ± {adv['euro_antithetic']['stderr']:.4f}"),
-            ("European Call (QMC)", f"${adv['euro_qmc']['price']:,.4f} ± {adv['euro_qmc']['stderr']:.4f}"),
-            ("European Call (CV)", f"${adv['euro_control_variate']['price']:,.4f} ± {adv['euro_control_variate']['stderr']:.4f}"),
-            ("Asian Call", f"${adv['asian_call']['price']:,.4f} ± {adv['asian_call']['stderr']:.4f}"),
-            ("Barrier Up-Out", f"${adv['barrier_up_out_call']['price']:,.4f} ± {adv['barrier_up_out_call']['stderr']:.4f}"),
-            ("American Put LSMC", f"${adv['american_put_lsmc']['price']:,.4f} ± {adv['american_put_lsmc']['stderr']:.4f}"),
-        ]
-        right = [
-            ("Pathwise Delta", f"{adv['pathwise_greeks']['delta']:+.4f} ± {adv['pathwise_greeks']['delta_stderr']:.4f}"),
-            ("Pathwise Vega", f"{adv['pathwise_greeks']['vega']:+.4f} ± {adv['pathwise_greeks']['vega_stderr']:.4f}"),
-            ("Pathwise Rho", f"{adv['pathwise_greeks']['rho']:+.4f} ± {adv['pathwise_greeks']['rho_stderr']:.4f}"),
-            ("Conv. slope", f"{adv['convergence']['loglog_slope']:+.3f} (target -0.500)"),
-            ("Anti ratio", f"{adv['variance_reduction_ratio_antithetic']:.3f}"),
-            ("QMC ratio", f"{adv['variance_reduction_ratio_qmc']:.3f}"),
-            ("CV ratio", f"{adv['variance_reduction_ratio_cv']:.3f}"),
-        ]
-
-        ax.text(0.5, 0.96, "ADVANCED  MONTE  CARLO  SUMMARY",
-                transform=ax.transAxes, ha="center", va="top",
-                fontsize=14, fontweight="bold", color=C["title"], fontfamily="monospace")
-        ax.text(0.5, 0.90,
-                f"{self.eng.ticker}  |  BS call=${adv['black_scholes_call']:,.4f}  |  multi-asset corr={adv['multi_asset_emp_corr']:+.3f}",
-                transform=ax.transAxes, ha="center", va="top",
-                fontsize=8.5, color=C["muted"], fontfamily="monospace")
-
-        ax.plot([0.03, 0.97], [0.86, 0.86], color=C["border"], lw=0.8, transform=ax.transAxes)
-
-        col_xs = [0.24, 0.76]
-        groups = [left, right]
-        titles = ["PRICING METHODS", "GREEKS / EFFICIENCY"]
-        colors = [C["cyan"], C["amber"]]
-
-        for col_x, metrics, title, tcol in zip(col_xs, groups, titles, colors):
-            ax.text(col_x, 0.80, title, transform=ax.transAxes, ha="center",
-                    fontsize=8.8, color=tcol, fontweight="bold", fontfamily="monospace")
-            for i, (label, value) in enumerate(metrics):
-                y = 0.74 - i * 0.115
-                ax.text(col_x, y, label, transform=ax.transAxes, ha="center",
-                        fontsize=7.2, color=C["muted"], fontfamily="monospace")
-                ax.text(col_x, y - 0.055, value, transform=ax.transAxes, ha="center",
-                        fontsize=10.5, color=C["title"], fontweight="bold", fontfamily="monospace")
-
-        ax.text(0.5, 0.02,
-                f"Convergence slope should approach -0.5; lower variance ratios are better. Generated {datetime.now().strftime('%Y-%m-%d %H:%M')}",
-                transform=ax.transAxes, ha="center", va="bottom",
-                fontsize=7.3, color=C["muted"], fontfamily="monospace")
-
-        path_out = OUT / f"mc_advanced_{self.eng.ticker}.png"
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] Advanced summary -> [cyan]{path_out}[/cyan]")
-        if show:
-            plt.show()
-        return fig
-
-    def fig_surface(self, paths: np.ndarray, show=True):
-        from mpl_toolkits.mplot3d import Axes3D  # noqa
-
-        n  = min(60, len(paths))
-        N  = paths.shape[1] - 1
-        Z  = paths[:n]
-        S0 = self.eng.S0
-        X, Y = np.meshgrid(np.arange(N+1), np.arange(n))
-        z_low, z_high = _surface_z_bounds(Z, S0)
-        wire_r = max(1, n // 12)
-        wire_c = max(1, (N + 1) // 20)
-
-        fig = plt.figure(figsize=(16, 11), facecolor=C["bg"])
-        ax  = fig.add_subplot(111, projection="3d")
-        _style_3d_axis(ax, N, n, z_low, z_high)
-
-        surf = ax.plot_surface(X, Y, Z, cmap="plasma", alpha=0.88,
-                               rstride=2, cstride=4, linewidth=0,
-                               antialiased=True, shade=True)
-        ax.plot_wireframe(X[::wire_r, ::wire_c], Y[::wire_r, ::wire_c], Z[::wire_r, ::wire_c],
-                          color="white", alpha=0.04, lw=0.3)
-
-        ax.contourf(X, Y, Z, zdir="z", offset=z_low, cmap="plasma", alpha=0.25, levels=12)
-
-        mean_z = Z.mean(axis=0)
-        ax.plot(np.arange(N+1), np.full(N+1, n//2), mean_z,
-                color="white", lw=3.0, alpha=0.95, zorder=10)
-
-        xx, yy = np.meshgrid([0, N], [0, n-1])
-        s0_plane = np.full(xx.shape, S0, dtype=float)
-        ax.plot_surface(xx, yy, s0_plane, alpha=0.10, color=C["red"], linewidth=0)
-        ax.text(N*0.02, n*0.48, S0*1.01, f"S0 ${S0:.2f}",
-                color=C["red"], fontsize=10, fontweight="bold")
-
-        ax.set_xlabel("Days",  fontsize=10, color=C["muted"], labelpad=12)
-        ax.set_ylabel("Sim #", fontsize=10, color=C["muted"], labelpad=12)
-        ax.set_zlabel("Price", fontsize=10, color=C["muted"], labelpad=12)
-        fig.suptitle(
-            f"Monte Carlo 3D Surface  -  {self.eng.ticker}\n"
-            f"mu={self.eng.mu:+.2%}   sigma={self.eng.sigma:.2%}   {n} sims x {N}d",
-            fontsize=11,
-            color=C["title"],
-            y=0.96,
+        base_corr = np.array([[1.0, 0.55, 0.35], [0.55, 1.0, 0.62], [0.35, 0.62, 1.0]], dtype=float)
+        stress_bump = np.array([[0.0, 0.32, -0.10], [0.32, 0.0, 0.18], [-0.10, 0.18, 0.0]], dtype=float)
+        dynamic_cov = self._dynamic_multi_asset_paths(
+            N=horizon,
+            num_sim=max(500, min(num_sim, 1200)),
+            seed=seed + 820,
+            base_corr=base_corr,
+            stress_bump=stress_bump,
         )
 
-        cbar = fig.colorbar(surf, ax=ax, shrink=0.52, aspect=11, pad=0.08)
-        cbar.set_label("Price ($)", color=C["muted"], fontsize=9)
-        plt.setp(cbar.ax.yaxis.get_ticklabels(), color=C["muted"], fontsize=7)
-        fig.subplots_adjust(left=0.02, right=0.92, bottom=0.03, top=0.87)
+        bridge_n = horizon
+        rng = np.random.default_rng(seed + 900)
+        z = rng.standard_normal(bridge_n)
+        bridge_noise = rng.standard_normal(bridge_n - 1)
+        t_unit = np.linspace(0.0, horizon / 252.0, bridge_n + 1)
+        standard_w = np.concatenate([[0.0], np.cumsum(np.sqrt(1.0 / bridge_n) * z)])
+        bridge_w = self._brownian_bridge_path(z, bridge_noise)
+        standard_path = self.eng.S0 * np.exp((0.05 - 0.5 * self.eng.sigma**2) * t_unit + self.eng.sigma * np.sqrt(horizon / 252.0) * standard_w)
+        bridge_path = self.eng.S0 * np.exp((0.05 - 0.5 * self.eng.sigma**2) * t_unit + self.eng.sigma * np.sqrt(horizon / 252.0) * bridge_w)
+        barrier = 1.2 * self.eng.S0
+        disc_paths, _ = self.eng.simulate_risk_neutral(r=0.05, N=horizon, num_sim=max(800, min(num_sim, 1800)), seed=seed + 910)
+        payoff = np.exp(-0.05 * horizon / 252.0) * np.maximum(disc_paths[:, -1] - self.eng.S0, 0.0)
+        discrete_alive = (disc_paths.max(axis=1) < barrier).astype(float)
+        bridge_survival = self._barrier_bridge_survival(disc_paths, barrier=barrier, sigma=self.eng.sigma, dt=(horizon / 252.0) / horizon)
+        bridge_payload = {
+            "time": t_unit.tolist(),
+            "standard_path": standard_path.tolist(),
+            "bridge_path": bridge_path.tolist(),
+            "barrier": float(barrier),
+            "discrete_price": float(np.mean(payoff * discrete_alive)),
+            "bridge_price": float(np.mean(payoff * bridge_survival)),
+            "discrete_active_ratio": float(np.mean(discrete_alive)),
+            "bridge_active_ratio": float(np.mean(bridge_survival)),
+        }
 
-        path_out = OUT / f"mc_surface_{self.eng.ticker}.png"
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] 3D surface -> [cyan]{path_out}[/cyan]")
-        if show: plt.show()
-        return fig
+        adaptive = self._adaptive_simulation(
+            N=min(max(30, N // 2), 84),
+            num_sim=min(max(180, num_sim // 2), 320),
+            seed=seed + 1000,
+            jump_lambda=0.85,
+        )
+        importance = self._importance_sampling_experiment(
+            N=horizon,
+            num_sim=max(1600, min(num_sim * 2, 4000)),
+            seed=seed + 1100,
+        )
 
-    def fig_mc_diagnostics(self, adv: dict, show=True):
-        fig = plt.figure(figsize=(20, 6.8), facecolor=C["bg"])
-        fig.patch.set_facecolor(C["bg"])
-        gs = gridspec.GridSpec(1, 3, figure=fig, wspace=0.28, left=0.05, right=0.97, top=0.88, bottom=0.14)
+        return {
+            "horizon_days": int(horizon),
+            "jump_scenarios": jump_scenarios,
+            "rate_processes": rate_payload,
+            "dynamic_covariance": dynamic_cov,
+            "brownian_bridge": bridge_payload,
+            "adaptive_timestep": adaptive,
+            "importance_sampling": importance,
+        }
 
-        n_grid = np.array(adv["convergence"]["n_grid"], dtype=float)
-        est = np.array(adv["convergence"]["estimates"], dtype=float)
-        se = np.array(adv["convergence"]["stderrs"], dtype=float)
-        bs = float(adv.get("black_scholes_call", np.nan))
 
-        ax1 = fig.add_subplot(gs[0])
-        _style(ax1)
-        ax1.errorbar(n_grid, est, yerr=1.96 * se, fmt="o-", color=C["cyan"], ecolor=C["border"],
-                     capsize=3, lw=1.6, ms=4.5, label="MC estimate +- 95% CI")
-        if np.isfinite(bs):
-            _hline(ax1, bs, C["amber"], f"Black-Scholes ${bs:.3f}", lw=1.6, ls="--")
-        ax1.set_xlabel("Number of Paths", fontsize=8, color=C["muted"])
-        ax1.set_ylabel("Price ($)", fontsize=8, color=C["muted"])
-        ax1.set_title("Convergence (Estimate vs N)", fontsize=9.5)
-        ax1.legend(loc="best", fontsize=6.5)
-        _tag(ax1, f"slope={adv['convergence']['loglog_slope']:+.3f}")
+class MonteCarloDiagnosticsLab:
+    """Numerical experimentation layer for understanding Monte Carlo accuracy and failure modes."""
 
-        ax2 = fig.add_subplot(gs[1])
-        _style(ax2)
-        ax2.loglog(n_grid, se, "o-", color=C["green"], lw=1.8, ms=5, label="Observed stderr")
-        ref = se[0] * np.sqrt(n_grid[0] / n_grid)
-        ax2.loglog(n_grid, ref, "--", color=C["purple"], lw=1.5, label="Reference O(1/sqrt(N))")
-        ax2.set_xlabel("Number of Paths (log)", fontsize=8, color=C["muted"])
-        ax2.set_ylabel("Std Error (log)", fontsize=8, color=C["muted"])
-        ax2.set_title("Error Decay", fontsize=9.5)
-        ax2.legend(loc="best", fontsize=6.5)
-        _tag(ax2, f"target slope=-0.5  observed={adv['convergence']['loglog_slope']:+.3f}")
+    def __init__(self, eng: GBMEngine):
+        self.eng = eng
 
-        ax3 = fig.add_subplot(gs[2])
-        _style(ax3)
-        labels = ["Antithetic", "QMC Sobol", "Control Variate"]
-        vals = [
-            float(adv["variance_reduction_ratio_antithetic"]),
-            float(adv["variance_reduction_ratio_qmc"]),
-            float(adv["variance_reduction_ratio_cv"]),
-        ]
-        cols = [C["blue"], C["green"], C["amber"]]
-        x = np.arange(len(labels))
-        bars = ax3.bar(x, vals, color=cols, alpha=0.8, width=0.62)
-        _hline(ax3, 1.0, C["red"], "Baseline variance ratio = 1.0", lw=1.2, ls=":")
-        ax3.set_xticks(x)
-        ax3.set_xticklabels(labels, fontsize=7)
-        ax3.set_ylabel("Variance Ratio", fontsize=8, color=C["muted"])
-        ax3.set_title("Variance Reduction Efficiency", fontsize=9.5)
-        for i, b in enumerate(bars):
-            ax3.text(b.get_x() + b.get_width() / 2, b.get_height() + 0.02, f"{vals[i]:.3f}",
-                     ha="center", va="bottom", fontsize=7, color=C["title"])
-        _tag(ax3, "lower is better")
+    def _paths_custom(self, Z: np.ndarray, r: float, sigma: float, S0: float, T: float) -> np.ndarray:
+        return self.eng._paths_from_normals(Z=Z, drift=r, sigma=sigma, S0=S0, T=T)
 
-        fig.suptitle(f"Monte Carlo Diagnostics - {self.eng.ticker}", fontsize=11,
-                     color=C["title"], fontweight="bold", y=0.96)
+    @staticmethod
+    def _pv_call(paths: np.ndarray, K: float, r: float, T: float) -> np.ndarray:
+        return np.exp(-r * T) * np.maximum(paths[:, -1] - K, 0.0)
 
-        path_out = OUT / f"mc_diagnostics_{self.eng.ticker}.png"
-        fig.savefig(str(path_out), dpi=130, bbox_inches="tight", facecolor=C["bg"])
-        rlog(f"  [green]OK[/green] MC diagnostics -> [cyan]{path_out}[/cyan]")
-        if show:
-            plt.show()
-        return fig
+    @staticmethod
+    def _pv_put(paths: np.ndarray, K: float, r: float, T: float) -> np.ndarray:
+        return np.exp(-r * T) * np.maximum(K - paths[:, -1], 0.0)
 
-    def render_all(self, st: dict, N: int, paths: np.ndarray, show=True, no3d=False, adv: dict | None = None):
-        figs = []
-        rlog("  [1/6] Historical price chart ...")
-        figs.append(self.fig_history(show=False))
-        rlog("  [2/6] Statistical analysis ...")
-        figs.append(self.fig_analysis(st, show=False))
-        rlog("  [3/6] Simulation panels ...")
-        figs.append(self.fig_simulation(st, show=False))
-        rlog("  [4/6] Risk metrics table ...")
-        figs.append(self.fig_risk(st, N, show=False))
-        if adv:
-            rlog("  [5/6] Advanced MC summary ...")
-            figs.append(self.fig_mc_summary(adv, show=False))
-            rlog("  [6/6] MC diagnostics ...")
-            figs.append(self.fig_mc_diagnostics(adv, show=False))
-        if not no3d:
-            rlog("  [+] 3D surface ...")
-            figs.append(self.fig_surface(paths, show=False))
-        if show:
-            rlog("\n  [cyan]-----------------------------------------------------[/cyan]")
-            rlog("  [yellow]ðŸ“Š All figures displayed![/yellow]")
-            rlog("  [yellow]Close figure windows to continue, or press Enter.[/yellow]")
-            rlog("  [cyan]-----------------------------------------------------[/cyan]\n")
-            plt.show(block=True)
-            # Raise figures in correct order (1, 2, 3, 4, 5) so first is on top
-            for fig in figs:
-                try:
-                    fig.canvas.manager.window.lift()
-                except Exception:
-                    pass
-            input("  Press Enter when done viewing figures...")
-        return figs
-    
+    @staticmethod
+    def _pv_barrier_up_out(paths: np.ndarray, K: float, barrier: float, r: float, T: float) -> np.ndarray:
+        alive = paths.max(axis=1) < barrier
+        return np.exp(-r * T) * np.maximum(paths[:, -1] - K, 0.0) * alive.astype(float)
+
+    @staticmethod
+    def _stderr(samples: np.ndarray) -> float:
+        if len(samples) <= 1:
+            return 0.0
+        return float(np.std(samples, ddof=1) / np.sqrt(len(samples)))
+
+    def _call_price_estimate(
+        self,
+        K: float,
+        r: float,
+        N: int,
+        num_sim: int,
+        sigma: float,
+        seed: int,
+    ) -> dict:
+        rng = np.random.default_rng(seed)
+        T = N / 252.0
+        Z = self.eng._generate_normals(num_sim=num_sim, N=N, rng=rng, random_method="pseudo", antithetic=False)
+        paths = self._paths_custom(Z=Z, r=r, sigma=sigma, S0=self.eng.S0, T=T)
+        pv = self._pv_call(paths=paths, K=K, r=r, T=T)
+        return {"price": float(np.mean(pv)), "stderr": self._stderr(pv), "samples": pv, "paths": paths}
+
+    def _convergence_heatmaps(self, seed: int) -> dict:
+        path_grid = [200, 500, 1000, 2000]
+        step_grid = [21, 63, 126, 252]
+        vol_mults = [0.7, 1.0, 1.4]
+        maturities = [21, 63, 126]
+        K = self.eng.S0
+        r = 0.05
+        scenarios = []
+        sid = 0
+        for vol_mult in vol_mults:
+            sigma = max(self.eng.sigma * vol_mult, 1e-6)
+            for maturity in maturities:
+                bs = self.eng.black_scholes_price(K=K, T=maturity / 252.0, r=r, option_type="call")
+                zmat = []
+                semat = []
+                for n_paths in path_grid:
+                    row_err = []
+                    row_se = []
+                    for steps in step_grid:
+                        est = self._call_price_estimate(
+                            K=K, r=r, N=steps, num_sim=n_paths, sigma=sigma, seed=seed + 50 * sid + n_paths + steps
+                        )
+                        row_err.append(float(est["price"] - bs))
+                        row_se.append(float(est["stderr"]))
+                    zmat.append(row_err)
+                    semat.append(row_se)
+                scenarios.append(
+                    {
+                        "id": sid,
+                        "vol_mult": vol_mult,
+                        "maturity": maturity,
+                        "bs": float(bs),
+                        "errors": zmat,
+                        "stderrs": semat,
+                    }
+                )
+                sid += 1
+        return {"path_grid": path_grid, "step_grid": step_grid, "scenarios": scenarios}
+
+    def _bias_analysis(self, seed: int) -> dict:
+        K = self.eng.S0
+        r = 0.05
+        N = 126
+        T = N / 252.0
+        bs = self.eng.black_scholes_price(K=K, T=T, r=r, option_type="call")
+        run_sizes = [300, 1200]
+        profiles = []
+        for idx, n_paths in enumerate(run_sizes):
+            estimates = []
+            for rep in range(36):
+                est = self._call_price_estimate(
+                    K=K, r=r, N=N, num_sim=n_paths, sigma=self.eng.sigma, seed=seed + 300 + idx * 100 + rep
+                )
+                estimates.append(est["price"])
+            arr = np.asarray(estimates, dtype=float)
+            running = np.cumsum(arr) / np.arange(1, len(arr) + 1, dtype=float)
+            profiles.append(
+                {
+                    "num_sim": n_paths,
+                    "estimates": arr.tolist(),
+                    "running_mean": running.tolist(),
+                    "bias": (arr - bs).tolist(),
+                    "mean_bias": float(np.mean(arr - bs)),
+                    "rmse": float(np.sqrt(np.mean((arr - bs) ** 2))),
+                    "std_estimate": float(np.std(arr, ddof=1)),
+                }
+            )
+        return {"bs": float(bs), "profiles": profiles}
+
+    def _discretization_analysis(self, seed: int) -> dict:
+        K = self.eng.S0
+        barrier = 1.08 * self.eng.S0
+        r = 0.05
+        fine_steps = 504
+        coarse_steps = [21, 63, 126, 252, 504]
+        num_sim = 900
+        T = 126 / 252.0
+        rng = np.random.default_rng(seed + 600)
+        Z_fine = rng.standard_normal((num_sim, fine_steps))
+        reference = None
+        rows = []
+        ref_paths = None
+        for steps in coarse_steps:
+            block = fine_steps // steps
+            Z = Z_fine.reshape(num_sim, steps, block).sum(axis=2) / np.sqrt(block)
+            paths = self._paths_custom(Z=Z, r=r, sigma=self.eng.sigma, S0=self.eng.S0, T=T)
+            pv_barrier = self._pv_barrier_up_out(paths, K=K, barrier=barrier, r=r, T=T)
+            pv_asian = np.exp(-r * T) * np.maximum(paths[:, 1:].mean(axis=1) - K, 0.0)
+            price_barrier = float(np.mean(pv_barrier))
+            price_asian = float(np.mean(pv_asian))
+            active_ratio = float(np.mean(paths.max(axis=1) < barrier))
+            if steps == fine_steps:
+                reference = {"barrier": price_barrier, "asian": price_asian}
+                ref_paths = paths
+            rows.append(
+                {
+                    "steps": steps,
+                    "barrier_price": price_barrier,
+                    "asian_price": price_asian,
+                    "active_ratio": active_ratio,
+                    "paths": paths,
+                }
+            )
+        payload = []
+        assert reference is not None and ref_paths is not None
+        for row in rows:
+            steps = row["steps"]
+            comp = ref_paths[:, :: fine_steps // steps]
+            rmse = float(np.sqrt(np.mean((row["paths"] - comp) ** 2)))
+            max_dev = float(np.mean(np.max(np.abs(row["paths"] - comp), axis=1)))
+            payload.append(
+                {
+                    "steps": steps,
+                    "barrier_price": row["barrier_price"],
+                    "asian_price": row["asian_price"],
+                    "barrier_divergence": float(row["barrier_price"] - reference["barrier"]),
+                    "asian_divergence": float(row["asian_price"] - reference["asian"]),
+                    "active_ratio": row["active_ratio"],
+                    "path_rmse": rmse,
+                    "path_max_dev": max_dev,
+                }
+            )
+        return {"barrier": float(barrier), "rows": payload}
+
+    def _variance_decomposition(self, seed: int) -> dict:
+        K = self.eng.S0
+        r = 0.05
+        N = 126
+        T = N / 252.0
+        num_sim = 1000
+        base_rng = np.random.default_rng(seed + 900)
+        base_Z = self.eng._generate_normals(num_sim=num_sim, N=N, rng=base_rng, random_method="pseudo", antithetic=False)
+
+        vol_prices = []
+        for mult in [0.75, 1.0, 1.35]:
+            paths = self._paths_custom(base_Z, r=r, sigma=max(self.eng.sigma * mult, 1e-6), S0=self.eng.S0, T=T)
+            vol_prices.append(float(np.mean(self._pv_call(paths, K=K, r=r, T=T))))
+
+        step_prices = []
+        for steps in [21, 63, 126, 252]:
+            rng = np.random.default_rng(seed + 910 + steps)
+            Z = self.eng._generate_normals(num_sim=num_sim, N=steps, rng=rng, random_method="pseudo", antithetic=False)
+            paths = self._paths_custom(Z, r=r, sigma=self.eng.sigma, S0=self.eng.S0, T=T)
+            step_prices.append(float(np.mean(self._pv_barrier_up_out(paths, K=K, barrier=1.08 * self.eng.S0, r=r, T=T))))
+
+        sampling_prices = []
+        for rep in range(20):
+            est = self._call_price_estimate(K=K, r=r, N=N, num_sim=400, sigma=self.eng.sigma, seed=seed + 940 + rep)
+            sampling_prices.append(est["price"])
+
+        jumps = AdvancedMonteCarloExtensions(self.eng)
+        jump_prices = []
+        for lam in [0.0, 0.35, 0.8]:
+            sim = jumps.simulate_jump_diffusion(
+                N=N,
+                num_sim=900,
+                seed=seed + 980 + int(100 * lam),
+                jump_lambda=lam,
+                jump_mean=-0.04,
+                jump_vol=0.18,
+                model="merton",
+                drift=r,
+                sigma=self.eng.sigma,
+            )
+            jump_prices.append(float(np.exp(-r * T) * np.maximum(sim["paths"][:, -1] - K, 0.0).mean()))
+
+        base_paths = self._paths_custom(base_Z, r=r, sigma=self.eng.sigma, S0=self.eng.S0, T=T)
+        linear = np.exp(-r * T) * base_paths[:, -1]
+        vanilla = self._pv_call(base_paths, K=K, r=r, T=T)
+        barrier = self._pv_barrier_up_out(base_paths, K=K, barrier=1.08 * self.eng.S0, r=r, T=T)
+
+        raw = {
+            "volatility": float(np.var(vol_prices, ddof=1)),
+            "timestep": float(np.var(step_prices, ddof=1)),
+            "sampling_noise": float(np.var(sampling_prices, ddof=1)),
+            "jump_events": float(np.var(jump_prices, ddof=1)),
+            "payoff_nonlinearity": float(max(np.var(vanilla, ddof=1) - np.var(linear, ddof=1), 0.0) + np.var(barrier, ddof=1)),
+        }
+        total = sum(raw.values()) + 1e-12
+        shares = {k: 100.0 * v / total for k, v in raw.items()}
+        return {"raw": raw, "shares": shares}
+
+    def _failure_region_maps(self, seed: int) -> dict:
+        r = 0.05
+        num_sim = 500
+        maturity_grid = [21, 63, 126, 252]
+        strike_mults = [0.9, 1.0, 1.1, 1.25, 1.4, 1.6]
+        sigma_grid = [0.18, 0.28, 0.45, 0.70]
+        path_grid = [150, 300, 700, 1500]
+        barrier_offsets = [1.01, 1.03, 1.06, 1.10, 1.16]
+
+        otm_map = []
+        for sigma in sigma_grid:
+            row = []
+            for k_mult in strike_mults:
+                K = self.eng.S0 * k_mult
+                est = self._call_price_estimate(K=K, r=r, N=126, num_sim=num_sim, sigma=sigma, seed=seed + 1200 + int(100 * sigma) + int(100 * k_mult))
+                price = max(est["price"], 1e-8)
+                payoff_zero = float(np.mean(est["samples"] <= 1e-10))
+                rel_noise = est["stderr"] / price
+                score = min(100.0, 35 * rel_noise + 55 * payoff_zero + 20 * max(k_mult - 1.0, 0.0) + 12 * max(sigma - 0.28, 0.0))
+                row.append(float(score))
+            otm_map.append(row)
+
+        barrier_map = []
+        for offset in barrier_offsets:
+            row = []
+            barrier = self.eng.S0 * offset
+            for n_paths in path_grid:
+                res = self.eng.price_barrier_option_mc(
+                    K=self.eng.S0,
+                    barrier=barrier,
+                    r=r,
+                    N=126,
+                    num_sim=n_paths,
+                    option_type="call",
+                    barrier_type="up-and-out",
+                    seed=seed + 1300 + int(100 * offset) + n_paths,
+                    random_method="pseudo",
+                    antithetic=False,
+                )
+                price = max(float(res["price"]), 1e-8)
+                rel_noise = float(res["stderr"]) / price
+                fragility = abs(float(res["active_ratio"]) - 0.5)
+                score = min(100.0, 45 * rel_noise + 30 * (1.0 - min(path_grid) / max(n_paths, 1)) + 35 * (1.0 - abs(fragility)))
+                row.append(float(score))
+            barrier_map.append(row)
+
+        ineff = []
+        for maturity in maturity_grid:
+            row = []
+            for n_paths in path_grid:
+                est = self._call_price_estimate(K=1.35 * self.eng.S0, r=r, N=maturity, num_sim=n_paths, sigma=self.eng.sigma, seed=seed + 1400 + maturity + n_paths)
+                rel_noise = est["stderr"] / max(est["price"], 1e-6)
+                score = min(100.0, 28 * rel_noise + 18 * maturity / 252.0 + 22 * (path_grid[0] / n_paths))
+                row.append(float(score))
+            ineff.append(row)
+
+        return {
+            "strike_mults": strike_mults,
+            "sigma_grid": sigma_grid,
+            "otm_vol_score": otm_map,
+            "barrier_offsets": barrier_offsets,
+            "path_grid": path_grid,
+            "barrier_score": barrier_map,
+            "maturity_grid": maturity_grid,
+            "inefficiency_score": ineff,
+        }
+
+    def _path_instability(self, seed: int) -> dict:
+        r = 0.05
+        N = 126
+        T = N / 252.0
+        K = self.eng.S0
+        num_sim = 400
+        rng = np.random.default_rng(seed + 1600)
+        Z = self.eng._generate_normals(num_sim=num_sim, N=N, rng=rng, random_method="pseudo", antithetic=False)
+        base_paths = self._paths_custom(Z, r=r, sigma=self.eng.sigma, S0=self.eng.S0, T=T)
+        sigma_paths = self._paths_custom(Z, r=r, sigma=self.eng.sigma * 1.01, S0=self.eng.S0, T=T)
+        rng2 = np.random.default_rng(seed + 1601)
+        Z2 = self.eng._generate_normals(num_sim=num_sim, N=N, rng=rng2, random_method="pseudo", antithetic=False)
+        seed_paths = self._paths_custom(Z2, r=r, sigma=self.eng.sigma, S0=self.eng.S0, T=T)
+        base_payoff = self._pv_call(base_paths, K=K, r=r, T=T)
+        sigma_payoff = self._pv_call(sigma_paths, K=K, r=r, T=T)
+        seed_payoff = self._pv_call(seed_paths, K=K, r=r, T=T)
+        idx = np.argsort(np.abs(sigma_payoff - base_payoff))[-6:]
+        amplification = np.abs(sigma_payoff - base_payoff) / max(np.mean(base_payoff), 1e-9)
+        return {
+            "time": np.linspace(0.0, T, N + 1).tolist(),
+            "sample_idx": idx.tolist(),
+            "base_paths": [base_paths[i].tolist() for i in idx],
+            "sigma_paths": [sigma_paths[i].tolist() for i in idx],
+            "seed_paths": [seed_paths[i].tolist() for i in idx],
+            "payoff_delta_sigma": (sigma_payoff - base_payoff)[:250].tolist(),
+            "payoff_delta_seed": (seed_payoff - base_payoff)[:250].tolist(),
+            "mean_abs_sigma_shift": float(np.mean(np.abs(sigma_payoff - base_payoff))),
+            "mean_abs_seed_shift": float(np.mean(np.abs(seed_payoff - base_payoff))),
+            "amplification_mean": float(np.mean(amplification)),
+            "amplification_p95": float(np.percentile(amplification, 95)),
+        }
+
+    def build_report(self, seed: int) -> dict:
+        return {
+            "convergence_heatmaps": self._convergence_heatmaps(seed=seed),
+            "bias_analysis": self._bias_analysis(seed=seed),
+            "discretization": self._discretization_analysis(seed=seed),
+            "variance_decomposition": self._variance_decomposition(seed=seed),
+            "failure_regions": self._failure_region_maps(seed=seed),
+            "path_instability": self._path_instability(seed=seed),
+        }
+
 
 
 ############################################################################################################################################################################################
+
 
 # PLOTLY DASHBOARD  - comprehensive, interactive, 6-panel
 class PlotlyDashboard:
@@ -1582,1150 +1725,1095 @@ class PlotlyDashboard:
             ),
         )
 
-    def render_main(self, st: dict, N: int, show=True, adv: dict | None = None):
-        adv = adv or {}
-        h  = self.eng.history
-        S0 = self.eng.S0
+    def _setup_defaults(self) -> tuple[dict, dict]:
+        lr = self.eng.log_ret.dropna()
+        dist_defaults = {
+            "distribution": "normal",
+            "mu": float(lr.mean()) if len(lr) else 0.0,
+            "sigma": max(float(lr.std()), 1e-4) if len(lr) else 0.2,
+            "nu": 7.0,
+        }
+        corr_defaults = {
+            "labels": [self.eng.ticker, f"{self.eng.ticker} Peer", "Market"],
+            "matrix": [
+                [1.0, 0.55, 0.35],
+                [0.55, 1.0, 0.65],
+                [0.35, 0.65, 1.0],
+            ],
+        }
+        return dist_defaults, corr_defaults
+
+    def render_setup_lab(self, show=False):
+        dist_defaults, corr_defaults = self._setup_defaults()
+        html_doc = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monte Carlo Setup Lab - {self.eng.ticker}</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+    :root {{
+      --bg: {C["bg"]};
+      --bg2: {C["bg2"]};
+      --bg3: {C["bg3"]};
+      --border: {C["border"]};
+      --muted: {C["muted"]};
+      --text: {C["text"]};
+      --title: {C["title"]};
+      --blue: {C["blue"]};
+      --green: {C["green"]};
+      --red: {C["red"]};
+      --amber: {C["amber"]};
+      --purple: {C["purple"]};
+      --cyan: {C["cyan"]};
+      --pink: {C["pink"]};
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Consolas, Menlo, monospace;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 15% 0%, rgba(88,166,255,0.12), transparent 30%),
+        linear-gradient(180deg, #0f141d 0%, var(--bg) 100%);
+    }}
+    .page {{
+      max-width: 1320px;
+      margin: 0 auto;
+      padding: 28px 22px 40px;
+    }}
+    .hero {{
+      margin-bottom: 22px;
+      padding: 22px 24px;
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      background: linear-gradient(180deg, rgba(22,27,34,0.96), rgba(13,17,23,0.96));
+      box-shadow: 0 24px 64px rgba(0,0,0,0.24);
+    }}
+    .eyebrow {{
+      display: inline-block;
+      margin-bottom: 10px;
+      color: var(--cyan);
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }}
+    .hero h1 {{
+      margin: 0 0 8px;
+      color: var(--title);
+      font-size: 30px;
+    }}
+    .hero p {{
+      margin: 0;
+      max-width: 860px;
+      line-height: 1.55;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .hero-meta {{
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }}
+    .pill {{
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(28,33,40,0.92);
+      color: var(--muted);
+      font-size: 12px;
+    }}
+    .section {{
+      margin-top: 18px;
+      padding: 20px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: rgba(22,27,34,0.94);
+      box-shadow: 0 20px 56px rgba(0,0,0,0.18);
+    }}
+    .section-head {{
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }}
+    .section-head h2 {{
+      margin: 0 0 6px;
+      color: var(--title);
+      font-size: 19px;
+    }}
+    .section-head p {{
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      max-width: 760px;
+    }}
+    .distribution-layout {{
+      display: grid;
+      grid-template-columns: 300px minmax(0, 1fr) 260px;
+      gap: 18px;
+      align-items: start;
+    }}
+    .side-card {{
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(13,17,23,0.76);
+      padding: 16px;
+    }}
+    .side-card h3 {{
+      margin: 0 0 12px;
+      color: var(--title);
+      font-size: 14px;
+    }}
+    .control {{
+      margin-bottom: 16px;
+    }}
+    .control:last-child {{
+      margin-bottom: 0;
+    }}
+    .control label {{
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: var(--title);
+    }}
+    .control label span {{
+      color: var(--cyan);
+      font-weight: 700;
+    }}
+    select, input[type="range"], input[type="number"] {{
+      width: 100%;
+    }}
+    select, input[type="number"] {{
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg3);
+      color: var(--text);
+      padding: 10px 12px;
+      font-family: inherit;
+    }}
+    input[type="range"] {{
+      accent-color: var(--blue);
+    }}
+    .plot-card {{
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(13,17,23,0.76);
+      padding: 10px 10px 4px;
+    }}
+    #distributionPlot, #corrPlot {{
+      min-height: 470px;
+    }}
+    .stat-row {{
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 9px 0;
+      border-bottom: 1px solid rgba(48,54,61,0.56);
+      font-size: 12px;
+    }}
+    .stat-row:last-child {{
+      border-bottom: 0;
+    }}
+    .stat-row .name {{
+      color: var(--muted);
+    }}
+    .stat-row .val {{
+      color: var(--cyan);
+      text-align: right;
+      font-weight: 700;
+    }}
+    .corr-layout {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 18px;
+      align-items: start;
+    }}
+    .matrix-editor {{
+      display: grid;
+      gap: 10px;
+    }}
+    .editor-grid {{
+      display: grid;
+      gap: 8px;
+      width: 100%;
+    }}
+    .editor-row {{
+      display: grid;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+    }}
+    .axis-label {{
+      color: var(--muted);
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.15;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }}
+    .editor-grid input {{
+      text-align: center;
+      font-weight: 700;
+      padding: 10px 8px;
+      min-width: 0;
+    }}
+    .editor-corner {{
+      min-width: 0;
+    }}
+    .editor-grid .axis-label,
+    .editor-grid input {{
+      min-width: 0;
+    }}
+    .matrix-editor .axis-label {{
+      font-size: 11px;
+    }}
+    .matrix-editor input {{
+      padding: 8px 6px;
+      font-size: 12px;
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 132px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 14px;
+    }}
+    .badge.valid {{
+      background: rgba(63,185,80,0.16);
+      border-color: rgba(63,185,80,0.32);
+      color: #abf3b4;
+    }}
+    .badge.invalid {{
+      background: rgba(248,81,73,0.16);
+      border-color: rgba(248,81,73,0.32);
+      color: #ffb2ac;
+    }}
+    .note {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }}
+    @media (max-width: 1120px) {{
+      .distribution-layout, .corr-layout {{
+        grid-template-columns: 1fr;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div class="eyebrow">Pre-Simulation Inputs</div>
+      <h1>Layer 0 Setup Lab</h1>
+      <p>Use this page to inspect the distribution assumptions and co-movement inputs before running Monte Carlo. The goal is quick sanity checking, not a crowded dashboard.</p>
+      <div class="hero-meta">
+        <div class="pill">Ticker: {self.eng.ticker}</div>
+        <div class="pill">mu seed: {dist_defaults["mu"]:+.4f}</div>
+        <div class="pill">sigma seed: {dist_defaults["sigma"]:.4f}</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>01. Distribution Preview</h2>
+          <p>Calibrated distribution from historical data showing PDF/CDF shape with moment statistics and standard deviation markers. This represents the actual distribution used in Monte Carlo simulation.</p>
+        </div>
+      </div>
+      <div class="distribution-layout">
+        <aside class="side-card">
+          <h3>Calibrated Parameters</h3>
+          <div class="control">
+            <label>Distribution Type</label>
+            <div style="padding: 10px 12px; background: var(--bg3); border-radius: 10px; color: var(--cyan); font-weight: bold;">Normal (Log Returns)</div>
+          </div>
+          <div class="control">
+            <label>Drift (μ)</label>
+            <div style="padding: 10px 12px; background: var(--bg3); border-radius: 10px; color: var(--text); font-weight: bold;">{dist_defaults["mu"]:+.4f}</div>
+          </div>
+          <div class="control">
+            <label>Volatility (σ)</label>
+            <div style="padding: 10px 12px; background: var(--bg3); border-radius: 10px; color: var(--text); font-weight: bold;">{dist_defaults["sigma"]:.4f}</div>
+          </div>
+          <div class="control">
+            <label>Data Source</label>
+            <div style="padding: 10px 12px; background: var(--bg3); border-radius: 10px; color: var(--muted); font-size: 11px;">Historical calibration from {self.eng.ticker}</div>
+          </div>
+        </aside>
+        <div class="plot-card">
+          <div id="distributionPlot"></div>
+        </div>
+        <aside class="side-card">
+          <h3>Moments</h3>
+          <div id="momentStats"></div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>02. Correlation Matrix</h2>
+          <p>Edit the off-diagonal entries, update the heatmap immediately, and keep an eye on the PSD validity badge before Cholesky-based simulation.</p>
+        </div>
+      </div>
+      <div class="corr-layout">
+        <div class="plot-card">
+          <div id="corrPlot"></div>
+        </div>
+        <aside class="side-card matrix-editor">
+          <div id="psdBadge" class="badge valid">Valid</div>
+          <div id="psdMeta" class="note"></div>
+          <h3>Matrix Editor</h3>
+          <div id="corrGrid" class="editor-grid"></div>
+          <div class="note">Blue means positive correlation, white is near zero, and red is negative correlation. Diagonal terms remain fixed at 1.00.</div>
+        </aside>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const theme = {json.dumps(C)};
+    const distState = {json.dumps(dist_defaults)};
+    const corrState = {json.dumps(corr_defaults)};
+
+    const distType = document.getElementById("distType");
+    const muSlider = document.getElementById("muSlider");
+    const sigmaSlider = document.getElementById("sigmaSlider");
+    const nuSlider = document.getElementById("nuSlider");
+    const momentStats = document.getElementById("momentStats");
+    const psdBadge = document.getElementById("psdBadge");
+    const psdMeta = document.getElementById("psdMeta");
+    const corrGrid = document.getElementById("corrGrid");
+
+    function erfApprox(x) {{
+      const sign = x >= 0 ? 1 : -1;
+      const ax = Math.abs(x);
+      const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429;
+      const p = 0.3275911;
+      const t = 1 / (1 + p * ax);
+      const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-ax * ax);
+      return sign * y;
+    }}
+
+    function logGamma(z) {{
+      const cof = [76.18009172947146,-86.50532032941677,24.01409824083091,-1.231739572450155,0.001208650973866179,-0.000005395239384953];
+      let x = z;
+      let y = z;
+      let tmp = x + 5.5;
+      tmp -= (x + 0.5) * Math.log(tmp);
+      let ser = 1.000000000190015;
+      for (let j = 0; j < cof.length; j += 1) {{
+        y += 1;
+        ser += cof[j] / y;
+      }}
+      return Math.log(2.5066282746310005 * ser / x) - tmp;
+    }}
+
+    function normalPdf(x, mu, sigma) {{
+      const z = (x - mu) / sigma;
+      return Math.exp(-0.5 * z * z) / (sigma * Math.sqrt(2 * Math.PI));
+    }}
+
+    function normalCdf(x, mu, sigma) {{
+      return 0.5 * (1 + erfApprox((x - mu) / (sigma * Math.sqrt(2))));
+    }}
+
+    function tPdf(x, mu, sigma, nu) {{
+      const z = (x - mu) / sigma;
+      const logCoeff = logGamma((nu + 1) / 2) - logGamma(nu / 2) - 0.5 * Math.log(nu * Math.PI) - Math.log(sigma);
+      return Math.exp(logCoeff) * Math.pow(1 + (z * z) / nu, -(nu + 1) / 2);
+    }}
+
+    function simpsonIntegral(fn, a, b, n = 400) {{
+      if (b <= a) return 0;
+      const steps = n % 2 === 0 ? n : n + 1;
+      const h = (b - a) / steps;
+      let sum = fn(a) + fn(b);
+      for (let i = 1; i < steps; i += 1) {{
+        const x = a + i * h;
+        sum += fn(x) * (i % 2 === 0 ? 2 : 4);
+      }}
+      return (h / 3) * sum;
+    }}
+
+    function tCdf(x, mu, sigma, nu) {{
+      const z = (x - mu) / sigma;
+      if (Math.abs(z) < 1e-12) return 0.5;
+      const area = simpsonIntegral((u) => {{
+        const coeff = Math.exp(logGamma((nu + 1) / 2) - logGamma(nu / 2) - 0.5 * Math.log(nu * Math.PI));
+        return coeff * Math.pow(1 + (u * u) / nu, -(nu + 1) / 2);
+      }}, 0, Math.abs(z), 500);
+      return z > 0 ? Math.min(1, 0.5 + area) : Math.max(0, 0.5 - area);
+    }}
+
+    function lognormalPdf(x, mu, sigma) {{
+      if (x <= 0) return 0;
+      const z = (Math.log(x) - mu) / sigma;
+      return Math.exp(-0.5 * z * z) / (x * sigma * Math.sqrt(2 * Math.PI));
+    }}
+
+    function lognormalCdf(x, mu, sigma) {{
+      if (x <= 0) return 0;
+      return normalCdf(Math.log(x), mu, sigma);
+    }}
+
+    function distMoments(kind, mu, sigma, nu) {{
+      if (kind === "normal") {{
+        return {{
+          mean: mu,
+          variance: sigma * sigma,
+          std: sigma,
+          skew: 0,
+          kurtosis: 3,
+          excessKurtosis: 0,
+          support: "all real x",
+        }};
+      }}
+      if (kind === "lognormal") {{
+        const variance = (Math.exp(sigma * sigma) - 1) * Math.exp(2 * mu + sigma * sigma);
+        const mean = Math.exp(mu + 0.5 * sigma * sigma);
+        const std = Math.sqrt(variance);
+        const skew = (Math.exp(sigma * sigma) + 2) * Math.sqrt(Math.exp(sigma * sigma) - 1);
+        const excessKurtosis = Math.exp(4 * sigma * sigma) + 2 * Math.exp(3 * sigma * sigma) + 3 * Math.exp(2 * sigma * sigma) - 6;
+        const kurtosis = excessKurtosis + 3;
+        return {{ mean, variance, std, skew, kurtosis, excessKurtosis, support: "x > 0" }};
+      }}
+      const excessKurtosis = nu > 4 ? 6 / (nu - 4) : Infinity;
+      return {{
+        mean: nu > 1 ? mu : NaN,
+        variance: nu > 2 ? (sigma * sigma * nu) / (nu - 2) : Infinity,
+        std: nu > 2 ? Math.sqrt((sigma * sigma * nu) / (nu - 2)) : Infinity,
+        skew: nu > 3 ? 0 : NaN,
+        kurtosis: nu > 4 ? 3 + excessKurtosis : Infinity,
+        excessKurtosis,
+        support: "all real x",
+      }};
+    }}
+
+    function cumulativeFromPdf(x, pdf) {{
+      const cdf = new Array(x.length).fill(0);
+      let total = 0;
+      for (let i = 1; i < x.length; i += 1) {{
+        total += 0.5 * (pdf[i] + pdf[i - 1]) * (x[i] - x[i - 1]);
+        cdf[i] = total;
+      }}
+      if (total <= 0) return cdf;
+      for (let i = 0; i < cdf.length; i += 1) cdf[i] = Math.max(0, Math.min(1, cdf[i] / total));
+      cdf[cdf.length - 1] = 1;
+      return cdf;
+    }}
+
+    function buildDistributionSeries(kind, mu, sigma, nu) {{
+      let xMin = mu - 4 * sigma;
+      let xMax = mu + 4 * sigma;
+      if (kind === "lognormal") {{
+        xMin = 1e-4;
+        xMax = Math.exp(mu + 4 * sigma);
+      }} else if (kind === "t") {{
+        xMin = mu - 6 * sigma;
+        xMax = mu + 6 * sigma;
+      }}
+      const x = [];
+      const pdf = [];
+      const cdf = [];
+      const n = 320;
+      for (let i = 0; i < n; i += 1) {{
+        const xi = xMin + (i / (n - 1)) * (xMax - xMin);
+        x.push(xi);
+        if (kind === "normal") {{
+          pdf.push(normalPdf(xi, mu, sigma));
+          cdf.push(normalCdf(xi, mu, sigma));
+        }} else if (kind === "lognormal") {{
+          pdf.push(lognormalPdf(xi, mu, sigma));
+          cdf.push(lognormalCdf(xi, mu, sigma));
+        }} else {{
+          pdf.push(tPdf(xi, mu, sigma, nu));
+        }}
+      }}
+      if (kind === "t") {{
+        return {{ x, pdf, cdf: cumulativeFromPdf(x, pdf) }};
+      }}
+      return {{ x, pdf, cdf }};
+    }}
+
+    function fmt(value) {{
+      if (Number.isNaN(value)) return "undefined";
+      if (!Number.isFinite(value)) return "infinite";
+      const abs = Math.abs(value);
+      if (abs >= 1000 || (abs > 0 && abs < 0.001)) return value.toExponential(3);
+      return value.toFixed(4);
+    }}
+
+    function renderMoments(kind, mu, sigma, nu) {{
+      const m = distMoments(kind, mu, sigma, nu);
+      const rows = [
+        ["E[X]", fmt(m.mean)],
+        ["Var[X]", fmt(m.variance)],
+        ["Std[X]", fmt(m.std)],
+        ["Skew", fmt(m.skew)],
+        ["Kurtosis", fmt(m.kurtosis)],
+        ["Excess kurt.", fmt(m.excessKurtosis)],
+        ["Support", m.support],
+      ];
+      if (kind === "t") rows.push(["Tail note", nu <= 4 ? "heavy / unstable" : "finite 4th moment"]);
+      momentStats.innerHTML = rows.map(([name, val]) => `
+        <div class="stat-row">
+          <div class="name">${{name}}</div>
+          <div class="val">${{val}}</div>
+        </div>
+      `).join("");
+      return m;
+    }}
+
+    function renderDistributionPlot() {{
+      // Use calibrated values from historical data
+      const kind = "normal";
+      const mu = distState.mu;
+      const sigma = distState.sigma;
+
+      const moments = renderMoments(kind, mu, sigma, 0);
+      const series = buildDistributionSeries(kind, mu, sigma, 0);
+      const shapes = [];
+      const annotations = [];
+      if (Number.isFinite(moments.mean) && Number.isFinite(moments.std)) {{
+        [
+          [moments.mean, theme.green, "E[X]"],
+          [moments.mean - moments.std, theme.amber, "-1σ"],
+          [moments.mean + moments.std, theme.amber, "+1σ"],
+          [moments.mean - 2 * moments.std, theme.purple, "-2σ"],
+          [moments.mean + 2 * moments.std, theme.purple, "+2σ"],
+        ].forEach(([x, color, label]) => {{
+          shapes.push({{
+            type: "line",
+            x0: x, x1: x, y0: 0, y1: 1,
+            xref: "x", yref: "paper",
+            line: {{ color, width: 1.2, dash: "dash" }}
+          }});
+          annotations.push({{
+            x, y: 1.02, xref: "x", yref: "paper",
+            text: label, showarrow: false,
+            font: {{ size: 10, color }},
+          }});
+        }});
+      }}
+
+      Plotly.react("distributionPlot", [
+        {{
+          x: series.x,
+          y: series.pdf,
+          type: "scatter",
+          mode: "lines",
+          name: "PDF",
+          line: {{ color: theme.blue, width: 3 }},
+          hovertemplate: "x=%{{x:.4f}}<br>PDF=%{{y:.4f}}<extra></extra>",
+        }},
+        {{
+          x: series.x,
+          y: series.cdf,
+          type: "scatter",
+          mode: "lines",
+          name: "CDF",
+          yaxis: "y2",
+          line: {{ color: theme.pink, width: 2.4 }},
+          hovertemplate: "x=%{{x:.4f}}<br>CDF=%{{y:.4f}}<extra></extra>",
+        }}
+      ], {{
+        paper_bgcolor: theme.bg,
+        plot_bgcolor: theme.bg,
+        margin: {{ l: 58, r: 56, t: 46, b: 54 }},
+        font: {{ family: "Consolas, Menlo, monospace", color: theme.text }},
+        title: {{
+          text: "Calibrated Distribution (Normal Log Returns)",
+          font: {{ size: 15, color: theme.title }},
+          x: 0.02,
+          xanchor: "left",
+        }},
+        hoverlabel: {{
+          bgcolor: "#ffffff",
+          bordercolor: theme.border,
+          font: {{ color: "#111111", family: "Consolas, Menlo, monospace" }},
+        }},
+        legend: {{
+          orientation: "h",
+          x: 0.5,
+          xanchor: "center",
+          y: 1.10,
+          bgcolor: "rgba(22,27,34,0.86)",
+          bordercolor: theme.border,
+          borderwidth: 1,
+        }},
+        xaxis: {{
+          title: "Log return",
+          gridcolor: theme.border,
+          zerolinecolor: theme.border,
+        }},
+        yaxis: {{
+          title: "Density f(x)",
+          gridcolor: theme.border,
+          zerolinecolor: theme.border,
+        }},
+        yaxis2: {{
+          title: "Probability F(x)",
+          overlaying: "y",
+          side: "right",
+          range: [0, 1],
+          showgrid: false,
+          tickfont: {{ color: theme.pink }},
+          titlefont: {{ color: theme.pink }},
+        }},
+        hovermode: "x unified",
+        shapes,
+        annotations,
+      }}, {{
+        responsive: true,
+        displayModeBar: true,
+        scrollZoom: true,
+      }});
+    }}
+
+    function corrColor(v) {{
+      const clamped = Math.max(-1, Math.min(1, v));
+      if (clamped >= 0) {{
+        const t = clamped;
+        const r = Math.round(255 - 167 * t);
+        const g = Math.round(255 - 73 * t);
+        const b = 255;
+        return `rgb(${{r}},${{g}},${{b}})`;
+      }}
+      const t = Math.abs(clamped);
+      const r = 255;
+      const g = Math.round(255 - 104 * t);
+      const b = Math.round(255 - 106 * t);
+      return `rgb(${{r}},${{g}},${{b}})`;
+    }}
+
+    function choleskyStatus(matrix) {{
+      const n = matrix.length;
+      const L = Array.from({{ length: n }}, () => Array(n).fill(0));
+      for (let i = 0; i < n; i += 1) {{
+        for (let j = 0; j <= i; j += 1) {{
+          let sum = matrix[i][j];
+          for (let k = 0; k < j; k += 1) sum -= L[i][k] * L[j][k];
+          if (i === j) {{
+            if (sum < -1e-9) return false;
+            L[i][j] = Math.sqrt(Math.max(sum, 0));
+          }} else {{
+            if (Math.abs(L[j][j]) < 1e-12) {{
+              if (Math.abs(sum) > 1e-8) return false;
+              L[i][j] = 0;
+            }} else {{
+              L[i][j] = sum / L[j][j];
+            }}
+          }}
+        }}
+      }}
+      return true;
+    }}
+
+    function jacobiEigenvalues(matrix) {{
+      const n = matrix.length;
+      const a = matrix.map((row) => row.slice());
+      const maxSweeps = Math.max(20, n * n * 8);
+      for (let sweep = 0; sweep < maxSweeps; sweep += 1) {{
+        let p = 0;
+        let q = 1;
+        let maxVal = 0;
+        for (let i = 0; i < n; i += 1) {{
+          for (let j = i + 1; j < n; j += 1) {{
+            const val = Math.abs(a[i][j]);
+            if (val > maxVal) {{
+              maxVal = val;
+              p = i;
+              q = j;
+            }}
+          }}
+        }}
+        if (maxVal < 1e-10) break;
+        const app = a[p][p];
+        const aqq = a[q][q];
+        const apq = a[p][q];
+        const phi = 0.5 * Math.atan2(2 * apq, aqq - app);
+        const c = Math.cos(phi);
+        const s = Math.sin(phi);
+        for (let k = 0; k < n; k += 1) {{
+          if (k !== p && k !== q) {{
+            const aik = a[k][p];
+            const akq = a[k][q];
+            a[k][p] = c * aik - s * akq;
+            a[p][k] = a[k][p];
+            a[k][q] = s * aik + c * akq;
+            a[q][k] = a[k][q];
+          }}
+        }}
+        a[p][p] = c * c * app - 2 * s * c * apq + s * s * aqq;
+        a[q][q] = s * s * app + 2 * s * c * apq + c * c * aqq;
+        a[p][q] = 0;
+        a[q][p] = 0;
+      }}
+      return a.map((row, i) => row[i]).sort((lhs, rhs) => lhs - rhs);
+    }}
+
+    function updatePsdStatus(matrix) {{
+      const eigenvalues = jacobiEigenvalues(matrix);
+      const minEigen = eigenvalues.length ? eigenvalues[0] : NaN;
+      const valid = choleskyStatus(matrix);
+      psdBadge.textContent = valid ? "Valid" : "Cholesky failed";
+      psdBadge.className = "badge " + (valid ? "valid" : "invalid");
+      const worstPair = [];
+      for (let i = 0; i < matrix.length; i += 1) {{
+        for (let j = i + 1; j < matrix.length; j += 1) {{
+          if (Math.abs(matrix[i][j]) > 0.95) worstPair.push(`[${{corrState.labels[i]}}-${{corrState.labels[j]}}]`);
+        }}
+      }}
+      const stressNote = worstPair.length ? ` | high |rho|: ${{worstPair.join(", ")}}` : "";
+      psdMeta.textContent = `min eigenvalue: ${{fmt(minEigen)}} | symmetric: yes${{stressNote}}`;
+      return valid;
+    }}
+
+    function shortCorrLabel(label) {{
+      const clean = String(label || "").trim();
+      if (!clean) return "";
+      if (/market/i.test(clean)) return "Mkt";
+      if (/peer/i.test(clean)) return "Peer";
+      if (clean.length <= 8) return clean;
+      const acronym = clean.split(/\\s+/).map((part) => part[0]).join("").toUpperCase();
+      return acronym || clean.slice(0, 8);
+    }}
+
+    function renderCorrGrid() {{
+      const labels = corrState.labels;
+      const matrix = corrState.matrix;
+      const n = labels.length;
+      corrGrid.innerHTML = "";
+      const shell = document.createElement("div");
+      shell.className = "matrix-grid";
+      shell.style.gridTemplateColumns = `130px repeat(${{n}}, minmax(72px, 1fr))`;
+
+      const headRow = document.createElement("div");
+      headRow.className = "matrix-row";
+      headRow.style.gridTemplateColumns = shell.style.gridTemplateColumns;
+      headRow.innerHTML = `<div class="corner"></div>` + labels.map((label) => `<div class="axis-label">${{label}}</div>`).join("");
+      shell.appendChild(headRow);
+
+      for (let i = 0; i < n; i += 1) {{
+        const row = document.createElement("div");
+        row.className = "matrix-row";
+        row.style.gridTemplateColumns = shell.style.gridTemplateColumns;
+        row.appendChild(Object.assign(document.createElement("div"), {{
+          className: "axis-label",
+          textContent: labels[i],
+        }}));
+
+        for (let j = 0; j < n; j += 1) {{
+          const cell = document.createElement("div");
+          cell.className = "cell" + (i === j ? " diag" : "");
+          cell.style.background = corrColor(matrix[i][j]);
+          const input = document.createElement("input");
+          input.type = "number";
+          input.step = "0.01";
+          input.min = "-1";
+          input.max = "1";
+          input.value = matrix[i][j].toFixed(2);
+          input.disabled = i === j;
+          input.addEventListener("input", (event) => {{
+            let v = Number(event.target.value);
+            if (!Number.isFinite(v)) return;
+            v = Math.max(-1, Math.min(1, v));
+            matrix[i][j] = v;
+            matrix[j][i] = v;
+            matrix[i][i] = 1;
+            matrix[j][j] = 1;
+            renderCorrGrid();
+          }});
+          cell.appendChild(input);
+          row.appendChild(cell);
+        }}
+        shell.appendChild(row);
+      }}
+
+      corrGrid.appendChild(shell);
+      updatePsdStatus(matrix);
+    }}
+
+    function renderCorrHeatmap() {{
+      const labels = corrState.labels;
+      const matrix = corrState.matrix;
+      Plotly.react("corrPlot", [{{
+        z: matrix,
+        x: labels,
+        y: labels,
+        type: "heatmap",
+        zmin: -1,
+        zmax: 1,
+        colorscale: [
+          [0.0, theme.red],
+          [0.5, "#f4f6f8"],
+          [1.0, theme.blue]
+        ],
+        text: matrix.map((row) => row.map((v) => v.toFixed(2))),
+        texttemplate: "%{{text}}",
+        textfont: {{ size: 14 }},
+        hovertemplate: "rho(%{{y}}, %{{x}}) = %{{z:.2f}}<extra></extra>",
+        colorbar: {{
+          title: "rho",
+          tickfont: {{ color: theme.muted }},
+          titlefont: {{ color: theme.muted }},
+        }},
+      }}], {{
+        paper_bgcolor: theme.bg,
+        plot_bgcolor: theme.bg,
+        margin: {{ l: 72, r: 28, t: 46, b: 54 }},
+        title: {{
+          text: "Editable correlation heatmap",
+          font: {{ size: 15, color: theme.title }},
+          x: 0.02,
+          xanchor: "left",
+        }},
+        font: {{ family: "Consolas, Menlo, monospace", color: theme.text }},
+        xaxis: {{ side: "top", tickfont: {{ size: 12 }} }},
+        yaxis: {{ autorange: "reversed", tickfont: {{ size: 12 }} }},
+      }}, {{
+        responsive: true,
+        displayModeBar: true,
+        scrollZoom: true,
+      }});
+    }}
+
+    function renderCorrEditor() {{
+      const labels = corrState.labels;
+      const matrix = corrState.matrix;
+      const n = labels.length;
+      corrGrid.innerHTML = "";
+      corrGrid.style.gridTemplateColumns = "1fr";
+
+      const head = document.createElement("div");
+      head.className = "editor-row";
+      head.style.gridTemplateColumns = `64px repeat(${{n}}, minmax(64px, 1fr))`;
+      head.innerHTML = `<div class="editor-corner"></div>` + labels.map((label) => `<div class="axis-label" title="${{label}}">${{shortCorrLabel(label)}}</div>`).join("");
+      corrGrid.appendChild(head);
+
+      for (let i = 0; i < n; i += 1) {{
+        const row = document.createElement("div");
+        row.className = "editor-row";
+        row.style.gridTemplateColumns = head.style.gridTemplateColumns;
+        row.innerHTML = `<div class="axis-label" title="${{labels[i]}}">${{shortCorrLabel(labels[i])}}</div>`;
+        for (let j = 0; j < n; j += 1) {{
+          const input = document.createElement("input");
+          input.type = "number";
+          input.step = "0.01";
+          input.min = "-1";
+          input.max = "1";
+          input.value = matrix[i][j].toFixed(2);
+          input.disabled = i === j;
+          input.addEventListener("input", (event) => {{
+            let v = Number(event.target.value);
+            if (!Number.isFinite(v)) return;
+            v = Math.max(-1, Math.min(1, v));
+            matrix[i][j] = v;
+            matrix[j][i] = v;
+            matrix[i][i] = 1;
+            matrix[j][j] = 1;
+            renderCorrEditor();
+            renderCorrHeatmap();
+            updatePsdStatus(matrix);
+          }});
+          row.appendChild(input);
+        }}
+        corrGrid.appendChild(row);
+      }}
+      updatePsdStatus(matrix);
+    }}
+
+    // Render calibrated distribution (no sliders needed)
+    renderDistributionPlot();
+    renderCorrEditor();
+    renderCorrHeatmap();
+  </script>
+</body>
+</html>
+"""
+        path_out = OUT / f"mc_setup_lab_{self.eng.ticker}.html"
+        path_out.write_text(html_doc, encoding="utf-8")
+        rlog(f"  [green]OK[/green] Setup lab -> [cyan]{path_out}[/cyan]")
+        return path_out
+
+    def render_history_detail(self, show=False):
+        h = self.eng.history
+        market = _history_market_data(self.eng.ticker, h.index)
+        market["Close"] = market["Close"].fillna(h)
+        market["Open"] = market["Open"].fillna(market["Close"].shift(1)).fillna(market["Close"])
+        vol = market["Volume"].astype(float)
+        vol_ma20 = vol.rolling(20).mean()
+        up_day = market["Close"] >= market["Open"]
+        spike = vol > 2 * vol_ma20.fillna(np.inf)
+        ma20 = h.rolling(20).mean()
+        ma50 = h.rolling(50).mean()
+        std20 = h.rolling(20).std()
+        bb_upper = ma20 + 2 * std20
+        bb_lower = ma20 - 2 * std20
+        band_width = (bb_upper - bb_lower) / ma20.replace(0, np.nan)
+        squeeze_cutoff = float(band_width.dropna().quantile(0.10)) if band_width.notna().any() else np.nan
+        squeeze_mask = (band_width <= squeeze_cutoff).fillna(False).to_numpy()
+        rsi = _compute_rsi(h, 14)
+        divergences = _find_bearish_rsi_divergences(h, rsi)
+        w52 = min(252, len(h))
+        hi52_idx = h.iloc[-w52:].idxmax()
+        lo52_idx = h.iloc[-w52:].idxmin()
+        hi52 = float(h.loc[hi52_idx])
+        lo52 = float(h.loc[lo52_idx])
+        cross_up = (ma20 > ma50) & (ma20.shift(1) <= ma50.shift(1))
+        cross_dn = (ma20 < ma50) & (ma20.shift(1) >= ma50.shift(1))
+        spike_idx = h.index[spike.fillna(False)]
+        spike_vol = vol.loc[spike_idx]
+        spike_colors = ["#8cff9b" if bool(up_day.loc[idx]) else "#ff8e88" for idx in spike_idx]
 
         fig = make_subplots(
-            rows=3, cols=3,
+            rows=3, cols=1, shared_xaxes=True,
+            vertical_spacing=0.015,
+            row_heights=[0.60, 0.20, 0.20],
             subplot_titles=(
-                f"Historical Price  ({self.eng.ticker})",
-                "Final Price Distribution",
-                "Log-Return Distribution",
-                "Monte Carlo Sample Paths",
-                "Percentile Confidence Bands",
-                "Path Density Heatmap",
-                "Rolling Volatility",
-                "Q-Q Plot",
-                "Risk & Performance Summary",
+                f"Historical Price  ({self.eng.ticker}, MC calibration context)",
+                "Volume / Participation",
+                "RSI-14 Momentum",
             ),
-            vertical_spacing=0.12,
-            horizontal_spacing=0.09,
-            specs=[
-                [{"type": "xy"}, {"type": "xy"}, {"type": "xy"}],
-                [{"type": "xy"}, {"type": "xy"}, {"type": "xy"}],
-                [{"type": "xy"}, {"type": "xy"}, {"type": "table"}],
-            ],
         )
 
-        ma20  = h.rolling(20).mean()
-        ma50  = h.rolling(50).mean()
-        std20 = h.rolling(20).std()
-
-        fig.add_trace(go.Scatter(
-            x=h.index, y=h.values, mode="lines", name="Close",
-            line=dict(color=C["blue"], width=2),
-            hovertemplate="Date: %{x}<br>Price: $%{y:,.2f}<extra></extra>"
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=h.index, y=ma20, mode="lines", name="MA-20",
-            line=dict(color=C["purple"], width=1.5),
-            hovertemplate="MA20: $%{y:,.2f}<extra></extra>"
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=h.index, y=ma50, mode="lines", name="MA-50",
-            line=dict(color=C["amber"], width=1.5, dash="dash"),
-            hovertemplate="MA50: $%{y:,.2f}<extra></extra>"
-        ), row=1, col=1)
-
-
-
-        # Bollinger upper
-        fig.add_trace(go.Scatter(
-            x=h.index, y=(ma20+2*std20), mode="lines", name="BB+2sigma",
-            line=dict(color=C["purple"], width=0.8, dash="dot"), opacity=0.7,
-            hovertemplate="BB+2sigma: $%{y:,.2f}<extra></extra>",
-            showlegend=False
-        ), row=1, col=1)
-
-
-
-        # Bollinger lower + fill
-        fig.add_trace(go.Scatter(
-            x=h.index, y=(ma20-2*std20), mode="lines", name="BB +/-2sigma",
-            line=dict(color=C["purple"], width=0.8, dash="dot"), opacity=0.7,
-            fill="tonexty", fillcolor="rgba(163,113,247,0.06)",
-            hovertemplate="BB-2sigma: $%{y:,.2f}<extra></extra>"
-        ), row=1, col=1)
-
-        finals = st["finals"]
-        fig.add_trace(go.Histogram(
-            x=finals, nbinsx=55, name="Final prices",
-            marker=dict(
-                color=finals,
-                colorscale=[[0, C["red"]], [0.5, C["amber"]], [1.0, C["green"]]],
-                colorbar=None,
-                line=dict(width=0),
-            ),
-            opacity=0.82,
-            hovertemplate="Price: $%{x:,.0f}<br>Count: %{y}<extra></extra>"
-        ), row=1, col=2)
-
-
-
-
-        # KDE overlay
-        kde_x = np.linspace(finals.min(), finals.max(), 250)
-        kde   = scipy_stats.gaussian_kde(finals)
-        kde_y = kde(kde_x)
-        scale = len(finals) * (finals.max()-finals.min()) / 55
-        fig.add_trace(go.Scatter(
-            x=kde_x, y=kde_y * scale, mode="lines", name="KDE",
-            line=dict(color=C["cyan"], width=2.5),
-            hovertemplate="$%{x:,.0f}: density=%{y:.4f}<extra></extra>"
-        ), row=1, col=2)
-
-        for val, col in [(S0, C["red"]), (st["mean"], C["green"]), (st["median"], C["amber"])]:
-            fig.add_vline(
-                x=val,
-                line_color=col,
-                line_dash="dash",
-                line_width=1.8,
-                row=1,
-                col=2,
+        for start, end in _contiguous_true_ranges(squeeze_mask):
+            fig.add_vrect(
+                x0=h.index[start], x1=h.index[end],
+                fillcolor="#9aa4b2", opacity=0.10, line_width=0,
+                row=1, col=1,
             )
-        fig.add_annotation(
-            xref="x2 domain",
-            yref="y2 domain",
-            x=0.02,
-            y=0.98,
-            text=(
-                f"<b>S0</b> ${S0:,.0f}<br>"
-                f"<b>Mean</b> ${st['mean']:,.0f}<br>"
-                f"<b>Median</b> ${st['median']:,.0f}"
-            ),
-            showarrow=False,
-            align="left",
-            bgcolor="rgba(13,17,23,0.78)",
-            bordercolor=C["border"],
-            borderwidth=1,
-            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
-        )
 
-        lr = self.eng.log_ret.values
-        fig.add_trace(go.Histogram(
-            x=lr, nbinsx=60, name="Log-returns",
-            histnorm="probability density",
-            marker=dict(color=C["cyan"], line=dict(width=0)), opacity=0.68,
-            hovertemplate="Return: %{x:.2%}<br>Density: %{y:.4f}<extra></extra>"
-        ), row=1, col=3)
+        fig.add_trace(go.Scatter(x=h.index, y=h.values, mode="lines", name="Close",
+                                 line=dict(color=C["cyan"], width=2.2),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>Price: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=ma20, mode="lines", name="MA-20",
+                                 line=dict(color=C["blue"], width=1.6),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>MA20: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=ma50, mode="lines", name="MA-50",
+                                 line=dict(color=C["amber"], width=1.6, dash="dash"),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>MA50: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=bb_upper, mode="lines", name="BB upper",
+                                 line=dict(color=C["purple"], width=0.9), opacity=0.6, showlegend=False,
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>BB Upper: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=bb_lower, mode="lines", name="BB band",
+                                 line=dict(color=C["purple"], width=0.9), fill="tonexty",
+                                 fillcolor="rgba(163,113,247,0.10)", opacity=0.6,
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>BB Lower: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=[hi52_idx], y=[hi52], mode="markers+text", name="52w high",
+                                 marker=dict(color=C["green"], size=12, symbol="triangle-up"),
+                                 text=["52w high"], textposition="top center",
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>52w high: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=[lo52_idx], y=[lo52], mode="markers+text", name="52w low",
+                                 marker=dict(color=C["red"], size=12, symbol="triangle-down"),
+                                 text=["52w low"], textposition="bottom center",
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>52w low: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index[cross_up.fillna(False)], y=h[cross_up.fillna(False)], mode="markers",
+                                 name="Bull cross", marker=dict(color=C["green"], size=7, symbol="circle"),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>Bull cross: $%{y:,.2f}<extra></extra>"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=h.index[cross_dn.fillna(False)], y=h[cross_dn.fillna(False)], mode="markers",
+                                 name="Bear cross", marker=dict(color=C["red"], size=7, symbol="circle"),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>Bear cross: $%{y:,.2f}<extra></extra>"), row=1, col=1)
 
-        x_lr = np.linspace(lr.min(), lr.max(), 300)
-        mu_r, sd_r = lr.mean(), lr.std()
+        bar_colors = np.where(spike, np.where(up_day, "#8cff9b", "#ff8e88"), np.where(up_day, C["green"], C["red"]))
+        fig.add_trace(go.Bar(x=h.index, y=vol, name="Volume", marker_color=bar_colors,
+                             hovertemplate="Date: %{x|%d %b %Y}<br>Volume: %{y:,.0f}<extra></extra>"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=vol_ma20, mode="lines", name="Vol MA-20",
+                                 line=dict(color=C["muted"], width=1.4),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>Vol MA20: %{y:,.0f}<extra></extra>"), row=2, col=1)
         fig.add_trace(go.Scatter(
-            x=x_lr, y=norm.pdf(x_lr, mu_r, sd_r), mode="lines", name="Normal fit",
-            line=dict(color=C["amber"], width=2.0),
-            hovertemplate="Return: %{x:.2%}<br>Normal PDF: %{y:.4f}<extra></extra>"
-        ), row=1, col=3)
-        df_t, loc_t, scale_t = t_dist.fit(lr)
-        fig.add_trace(go.Scatter(
-            x=x_lr, y=t_dist.pdf(x_lr, df_t, loc_t, scale_t), mode="lines",
-            name=f"t-fit (nu={df_t:.1f})",
-            line=dict(color=C["purple"], width=1.8, dash="dash"),
-            hovertemplate="Return: %{x:.2%}<br>t-PDF: %{y:.4f}<extra></extra>"
-        ), row=1, col=3)
-
-        days = np.arange(st["paths"].shape[1])
-        sample_n = min(50, st["paths"].shape[0])
-        sample_idx = np.random.default_rng(1).choice(st["paths"].shape[0], sample_n, replace=False)
-
-        for i in sample_idx:
-            f   = st["paths"][i, -1]
-            col = C["green"] if f > S0*1.3 else C["red"] if f < S0*0.7 else C["muted"]
-            fig.add_trace(go.Scatter(
-                x=days, y=st["paths"][i], mode="lines",
-                line=dict(color=col, width=0.6),
-                opacity=0.20, showlegend=False, hoverinfo="skip"
-            ), row=2, col=1)
-
-
-
-
-        # 25-75 fill band
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["75"], mode="lines",
-            line=dict(color="rgba(88,166,255,0)", width=0), showlegend=False, hoverinfo="skip"
-        ), row=2, col=1)
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["25"], mode="lines", name="25-75% band",
-            fill="tonexty", fillcolor="rgba(88,166,255,0.18)",
-            line=dict(color="rgba(88,166,255,0)", width=0), hoverinfo="skip"
+            x=spike_idx, y=spike_vol, mode="markers", name="Volume spike",
+            marker=dict(color=spike_colors, size=8, symbol="diamond"),
+            hovertemplate="Date: %{x|%d %b %Y}<br>Volume spike: %{y:,.0f}<extra></extra>"
         ), row=2, col=1)
 
-        fig.add_trace(go.Scatter(
-            x=days, y=st["mean_path"], mode="lines", name="Mean path",
-            line=dict(color=C["amber"], width=3),
-            hovertemplate="Day %{x}: Mean=$%{y:,.2f}<extra></extra>"
-        ), row=2, col=1)
-        fig.add_hline(y=S0, line_color=C["red"], line_dash="dash", line_width=1.5,
-                      row=2, col=1,
-                      annotation_text=f"S0 ${S0:,.0f}", annotation_font=dict(color=C["red"], size=8),
-                      annotation_position="top left")
+        fig.add_hrect(y0=70, y1=100, fillcolor=C["red"], opacity=0.10, line_width=0, row=3, col=1)
+        fig.add_hrect(y0=0, y1=30, fillcolor=C["green"], opacity=0.10, line_width=0, row=3, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=rsi.where((rsi >= 30) & (rsi <= 70)), mode="lines",
+                                 name="RSI-14", line=dict(color=C["muted"], width=1.6),
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>RSI: %{y:.1f}<extra></extra>"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=rsi.where(rsi > 70), mode="lines",
+                                 name="RSI > 70", line=dict(color=C["red"], width=1.8), showlegend=False,
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>RSI: %{y:.1f}<extra></extra>"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=h.index, y=rsi.where(rsi < 30), mode="lines",
+                                 name="RSI < 30", line=dict(color=C["green"], width=1.8), showlegend=False,
+                                 hovertemplate="Date: %{x|%d %b %Y}<br>RSI: %{y:.1f}<extra></extra>"), row=3, col=1)
 
-
-
-        # 5-95 fill
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["95"], mode="lines",
-            line=dict(color=C["green"], width=1.5, dash="dash"), name="95th pct",
-            hovertemplate="Day %{x}: 95th=$%{y:,.2f}<extra></extra>"
-        ), row=2, col=2)
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["5"], mode="lines", name="5th pct",
-            fill="tonexty", fillcolor="rgba(88,166,255,0.12)",
-            line=dict(color=C["red"], width=1.5, dash="dash"),
-            hovertemplate="Day %{x}: 5th=$%{y:,.2f}<extra></extra>",
-            showlegend=False
-        ), row=2, col=2)
-        # 25-75 fill
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["75"], mode="lines",
-            line=dict(color=C["green"], width=0.8, dash="dot"), showlegend=False, hoverinfo="skip"
-        ), row=2, col=2)
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["25"], mode="lines",
-            fill="tonexty", fillcolor="rgba(88,166,255,0.22)",
-            line=dict(color=C["red"], width=0.8, dash="dot"),
-            name="25-75%", hoverinfo="skip",
-            showlegend=False
-        ), row=2, col=2)
-        fig.add_trace(go.Scatter(
-            x=days, y=st["bands"]["50"], mode="lines", name="Median",
-            line=dict(color=C["amber"], width=2.5),
-            hovertemplate="Day %{x}: Median=$%{y:,.2f}<extra></extra>",
-            showlegend=False
-        ), row=2, col=2)
-
-        T    = st["paths"].shape[1] / 252.0
-        t_arr = np.linspace(0, T, len(days))
-        e_path = self.eng.S0 * np.exp(self.eng.mu * t_arr)
-        fig.add_trace(go.Scatter(
-            x=days, y=e_path, mode="lines", name="E[S_t]",
-            line=dict(color=C["purple"], width=1.5, dash="dot"),
-            hovertemplate="Day %{x}: E[S]=$%{y:,.2f}<extra></extra>",
-            showlegend=False
-        ), row=2, col=2)
-
-        paths_arr = st["paths"]
-        n_bins = 60
-        pmin = paths_arr.min() * 0.97
-        pmax = paths_arr.max() * 1.03
-        pbins = np.linspace(pmin, pmax, n_bins+1)
-        stride = max(1, paths_arr.shape[1]//100)
-        t_idx  = np.arange(0, paths_arr.shape[1], stride)
-        hm = np.zeros((n_bins, len(t_idx)))
-        for col_i, t in enumerate(t_idx):
-            c, _ = np.histogram(paths_arr[:, t], bins=pbins)
-            total = c.sum()
-            hm[:, col_i] = c / total if total > 0 else c
-
-        fig.add_trace(go.Heatmap(
-            z=hm,
-            x=t_idx,
-            y=0.5*(pbins[:-1]+pbins[1:]),
-            colorscale=[
-                [0.00, C["bg"]],
-                [0.15, "#0f2d4a"],
-                [0.35, "#1f6feb"],
-                [0.55, C["cyan"]],
-                [0.75, C["green"]],
-                [0.90, C["amber"]],
-                [1.00, "#ffd700"],
-            ],
-            showscale=True,
-            colorbar=dict(
-                title=dict(text="Density", font=dict(color=C["muted"], size=8)),
-                tickfont=dict(color=C["muted"], size=7),
-                thickness=12,
-                len=0.34,
-                x=1.11,
-                xanchor="left",
-                y=0.47,
-                yanchor="middle",
-                bgcolor="rgba(22,27,34,0.8)",
-                bordercolor=C["border"],
-                borderwidth=1
-            ),
-            hovertemplate="Day %{x}: $%{y:,.0f} | density=%{z:.4f}<extra></extra>",
-            name="Density"
-        ), row=2, col=3)
-        fig.add_trace(go.Scatter(
-            x=days, y=st["mean_path"], mode="lines", name="Mean path",
-            line=dict(color="white", width=2.5), showlegend=False,
-            hovertemplate="Day %{x}: Mean=$%{y:,.2f}<extra></extra>"
-        ), row=2, col=3)
-
-        rv = self.eng.log_ret.rolling(30).std() * np.sqrt(252)
-        fig.add_trace(go.Scatter(
-            x=rv.index, y=rv.values, mode="lines", name="30d rolling vol",
-            line=dict(color=C["amber"], width=1.8),
-            fill="tozeroy", fillcolor=f"rgba(227,179,65,0.10)",
-            hovertemplate="Date: %{x}<br>Vol: %{y:.1%}<extra></extra>"
-        ), row=3, col=1)
-        fig.add_hline(y=self.eng.sigma, line_color=C["purple"], line_dash="dash",
-                      row=3, col=1,
-                      annotation_text=f"Full-period sigma={self.eng.sigma:.1%}",
-                      annotation_font=dict(color=C["purple"], size=8),
-                      annotation_position="top left")
-
-        (osm, osr), (slope, intercept, _) = scipy_stats.probplot(lr)
-        fig.add_trace(go.Scatter(
-            x=osm, y=osr, mode="markers", name="Q-Q quantiles",
-            marker=dict(color=C["blue"], size=3, opacity=0.6),
-            hovertemplate="Theoretical: %{x:.3f}<br>Sample: %{y:.3f}<extra></extra>"
-        ), row=3, col=2)
-        ql = np.array([osm[0], osm[-1]])
-        fig.add_trace(go.Scatter(
-            x=ql, y=slope*ql+intercept, mode="lines", name="Normal ref.",
-            line=dict(color=C["amber"], width=2.0),
-        ), row=3, col=2)
-
-        rows_left = [
-            ("Last Close",   f"${S0:,.2f}"),
-            ("Drift  mu",     f"{self.eng.mu:+.2%}"),
-            ("Volatility sigma", f"{self.eng.sigma:.2%}"),
-            ("Sharpe",       f"{st['sharpe']:+.3f}"),
-            ("Sortino",      f"{st['sortino']:+.3f}"),
-            ("Calmar",       f"{st['calmar']:+.3f}"),
-            ("Win Rate",     f"{st['win_rate']:.1%}"),
-            ("Avg Win",      f"+${st['avg_win']:,.2f}"),
-            ("Mean stderr",  f"${st['mean_stderr']:,.4f}"),
-            ("P(Profit) SE", f"{st['prob_up_stderr']:.3%}"),
-        ]
-        rows_right = [
-            ("VaR 95%",     f"-${st['var95']:,.2f}"),
-            ("VaR 99%",     f"-${st['var99']:,.2f}"),
-            ("CVaR 95%",    f"-${st['cvar95']:,.2f}"),
-            ("P(Profit)",   f"{st['prob_up']:.1%}"),
-            ("P(Double)",   f"{st['prob_2x']:.1%}"),
-            ("P(Halve)",    f"{st['prob_half']:.1%}"),
-            ("Max DrawDn",  f"{st['hist_max_dd']:.2%}"),
-            ("Avg Loss",    f"-${st['avg_loss']:,.2f}"),
-            ("Conv slope",  f"{adv['convergence']['loglog_slope']:+.3f}" if adv else "n/a"),
-            ("Multi corr",  f"{adv['multi_asset_emp_corr']:+.3f}" if adv else "n/a"),
-        ]
-
-        if adv:
-            rows_left.extend([
-                ("Euro Pseudo", f"${adv['euro_plain']['price']:,.4f} ± {adv['euro_plain']['stderr']:.4f}"),
-                ("Euro Anti",   f"${adv['euro_antithetic']['price']:,.4f} ± {adv['euro_antithetic']['stderr']:.4f}"),
-                ("Euro QMC",    f"${adv['euro_qmc']['price']:,.4f} ± {adv['euro_qmc']['stderr']:.4f}"),
-                ("Euro CV",     f"${adv['euro_control_variate']['price']:,.4f} ± {adv['euro_control_variate']['stderr']:.4f}"),
-                ("Asian Call",  f"${adv['asian_call']['price']:,.4f} ± {adv['asian_call']['stderr']:.4f}"),
-                ("Barrier O/O", f"${adv['barrier_up_out_call']['price']:,.4f} ± {adv['barrier_up_out_call']['stderr']:.4f}"),
-                ("American Put", f"${adv['american_put_lsmc']['price']:,.4f} ± {adv['american_put_lsmc']['stderr']:.4f}"),
-            ])
-            rows_right.extend([
-                ("Delta",        f"{adv['pathwise_greeks']['delta']:+.4f} ± {adv['pathwise_greeks']['delta_stderr']:.4f}"),
-                ("Vega",         f"{adv['pathwise_greeks']['vega']:+.4f} ± {adv['pathwise_greeks']['vega_stderr']:.4f}"),
-                ("Rho",          f"{adv['pathwise_greeks']['rho']:+.4f} ± {adv['pathwise_greeks']['rho_stderr']:.4f}"),
-                ("Anti ratio",   f"{adv['variance_reduction_ratio_antithetic']:.3f}"),
-                ("QMC ratio",    f"{adv['variance_reduction_ratio_qmc']:.3f}"),
-                ("CV ratio",     f"{adv['variance_reduction_ratio_cv']:.3f}"),
-                ("BS call",      f"${adv['black_scholes_call']:,.4f}"),
-            ])
-
-        fig.add_trace(go.Table(
-            header=dict(
-                values=["<b>METRIC</b>", "<b>VALUE</b>", "<b>METRIC</b>", "<b>VALUE</b>"],
-                fill_color=C["bg3"], font=dict(color=C["title"], size=10),
-                line_color=C["border"], align="left",
-                height=28,
-            ),
-            cells=dict(
-                values=[
-                    [r[0] for r in rows_left],
-                    [r[1] for r in rows_left],
-                    [r[0] for r in rows_right],
-                    [r[1] for r in rows_right],
-                ],
-                fill_color=[[C["bg2"] if i%2==0 else C["bg"] for i in range(len(rows_left))]]*4,
-                font=dict(color=[C["muted"], C["cyan"], C["muted"], C["amber"]], size=9.5),
-                line_color=C["border"], align="left", height=25,
+        for ts in divergences:
+            if not np.isfinite(rsi.loc[ts]):
+                continue
+            fig.add_annotation(
+                x=ts, y=float(h.loc[ts]), row=1, col=1,
+                text="RSI div", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
+                ax=0, ay=-34, arrowcolor=C["amber"],
+                font=dict(color=C["amber"], size=9),
             )
-        ), row=3, col=3)
+            fig.add_annotation(
+                x=ts, y=float(rsi.loc[ts]), row=3, col=1,
+                text="bear div", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
+                ax=0, ay=-28, arrowcolor=C["amber"],
+                font=dict(color=C["amber"], size=9),
+            )
+
+        fig.add_hline(y=70, line_color=C["red"], line_dash="dash", line_width=1.0, row=3, col=1)
+        fig.add_hline(y=30, line_color=C["green"], line_dash="dash", line_width=1.0, row=3, col=1)
 
         layout = self._plotly_theme()
         layout.update(dict(
             title=dict(
-                text=(f"<b>Monte Carlo Dashboard</b> - {self.eng.ticker}<br>"
-                      f"mu={self.eng.mu:+.2%}  sigma={self.eng.sigma:.2%}  "
-                      f"S0=${S0:,.2f}  {st['paths'].shape[0]} sims x {N}d"),
+                text=(f"<b>Monte Carlo Input Signal Stack</b> - {self.eng.ticker}<br>"
+                      f"<span style='font-size:11px;color:{C['muted']}'>Historical context for drift, volatility regime, liquidity participation, and momentum stress signals</span>"),
                 x=0.5, y=0.985, xanchor="center", yanchor="top",
                 font=dict(size=15, color=C["title"])
             ),
-            height=1840,
-            margin=dict(l=70, r=120, t=120, b=130),
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=-0.08,
-                xanchor="center",
-                x=0.5,
-                font=dict(size=8),
-                bgcolor="rgba(13, 17, 23, 0.85)",
-                bordercolor=C["border"],
-                borderwidth=1,
-                tracegroupgap=4,
-                itemwidth=60
-            ),
+            height=1080,
+            margin=dict(l=70, r=70, t=130, b=90),
+            legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="center", x=0.5,
+                        font=dict(size=9), bgcolor="rgba(13,17,23,0.82)", bordercolor=C["border"], borderwidth=1),
+            bargap=0.08,
+            hovermode="x unified",
+            hoversubplots="axis",
+            spikedistance=-1,
         ))
         fig.update_layout(**layout)
-        fig.update_annotations(font=dict(size=11, color=C["title"]))
+        for ann in fig.layout.annotations:
+            if ann.text in {
+                f"Historical Price  ({self.eng.ticker}, MC calibration context)",
+                "Volume / Participation",
+                "RSI-14 Momentum",
+            }:
+                ann.font = dict(size=12, color=C["title"])
+        fig.update_yaxes(title_text="Price ($)", tickprefix="$", row=1, col=1)
+        fig.update_yaxes(title_text="Volume", tickformat="~s", row=2, col=1)
+        fig.update_yaxes(title_text="RSI", range=[0, 100], row=3, col=1)
+        fig.update_xaxes(title_text="Calendar date", row=3, col=1)
+        for r in [1, 2, 3]:
+            fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=1,
+                             showspikes=True, spikemode="across", spikesnap="cursor",
+                             spikecolor=C["blue"], spikethickness=1)
+            fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=1)
 
-        # axis labels
-        fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
-        fig.update_yaxes(title_text="Count", row=1, col=2)
-        fig.update_xaxes(title_text="Return (%)", row=1, col=3,
-                         tickformat=".1%")
-        fig.update_xaxes(title_text="Trading Day", row=2, col=1)
-        fig.update_yaxes(title_text="Price ($)", row=2, col=1, tickprefix="$")
-        fig.update_xaxes(title_text="Trading Day", row=2, col=2)
-        fig.update_yaxes(title_text="Price ($)", row=2, col=2, tickprefix="$")
-        fig.update_xaxes(title_text="Trading Day", row=2, col=3)
-        fig.update_yaxes(title_text="Price ($)", row=2, col=3, tickprefix="$")
-        fig.update_xaxes(title_text="Date", row=3, col=1)
-        fig.update_yaxes(title_text="Annual Vol", row=3, col=1, tickformat=".0%")
-        fig.update_xaxes(title_text="Theoretical Quantiles", row=3, col=2)
-        fig.update_yaxes(title_text="Sample Quantiles", row=3, col=2)
-
-
-
-        # grid styling
-        for r in range(1, 4):
-            for c in range(1, 4):
-                if not (r == 3 and c == 3):  # skip table
-                    fig.update_xaxes(
-                        gridcolor=C["border"], zerolinecolor=C["border"],
-                        row=r, col=c
-                    )
-                    fig.update_yaxes(
-                        gridcolor=C["border"], zerolinecolor=C["border"],
-                        row=r, col=c
-                    )
-
-        path_out = OUT / f"mc_dashboard_{self.eng.ticker}.html"
+        path_out = OUT / f"mc_history_detail_{self.eng.ticker}.html"
         fig.write_html(str(path_out), include_plotlyjs="cdn",
                        config={"displayModeBar": True, "scrollZoom": True})
-        rlog(f"  [green]OK[/green] Dashboard -> [cyan]{path_out}[/cyan]")
-        if show: fig.show()
-        return fig
-
-    def render_3d(self, paths: np.ndarray, N: int, show=True, no_anim=False):
-        """Generate fully interactive Plotly 3D surface and path explorer."""
-        S0 = self.eng.S0
-        n = len(paths)
-        Z = paths[:n]
-        x = np.arange(N + 1)
-        y = np.arange(n)
-
-        z_low, z_high = _surface_z_bounds(Z, S0)
-        x_span = max(float(N), 1.0)
-        y_span = max(float(n - 1), 1.0)
-        base_span = max(x_span, y_span)
-        z_ratio = max(float(z_high - z_low), 1e-9) / max(base_span, 1e-9)
-        z_ratio = float(np.clip(z_ratio, 0.25, 0.95))
-
-        surface_theme = dict(
-            scene=dict(
-                xaxis=dict(title="Days", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"]),
-                yaxis=dict(title="Sim #", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"]),
-                zaxis=dict(title="Price ($)", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"], range=[z_low, z_high]),
-                aspectmode="manual",
-                aspectratio=dict(x=1.35, y=max(0.45, y_span / x_span), z=z_ratio),
-                camera=dict(eye=dict(x=1.55, y=-1.45, z=0.72)),
-            ),
-            margin=dict(l=20, r=20, b=20, t=96),
-            title=dict(
-                text=(
-                    f"<b>Monte Carlo 3D Surface</b> - {self.eng.ticker}<br>"
-                    f"{n} sims x {N}d - mu={self.eng.mu:+.2%} - sigma={self.eng.sigma:.2%}"
-                ),
-                x=0.5, y=0.97, xanchor="center", yanchor="top",
-                font=dict(size=17, color=C["title"]),
-            ),
-        )
-
-        s0_mesh_x = np.array([[0, N], [0, N]], dtype=float)
-        s0_mesh_y = np.array([[0, 0], [n - 1, n - 1]], dtype=float)
-        s0_mesh_z = np.full((2, 2), S0, dtype=float)
-
-        fig_surface = go.Figure()
-        fig_surface.add_trace(
-            go.Surface(
-                x=x, y=y, z=Z, colorscale="Plasma", opacity=0.95,
-                colorbar=dict(title="Price ($)", len=0.68),
-                contours=dict(
-                    z=dict(show=True, usecolormap=True, project_z=True,
-                           start=z_low, end=z_high, size=max((z_high - z_low) / 12.0, 1e-6))
-                ),
-                hovertemplate="Day=%{x}<br>Sim=%{y}<br>Price=$%{z:,.2f}<extra></extra>",
-            )
-        )
-        fig_surface.add_trace(
-            go.Surface(
-                x=s0_mesh_x, y=s0_mesh_y, z=s0_mesh_z,
-                colorscale=[[0, C["red"]], [1, C["red"]]], opacity=0.18,
-                showscale=False, hoverinfo="skip",
-            )
-        )
-        fig_surface.add_trace(
-            go.Scatter3d(
-                x=x,
-                y=np.full_like(x, (n - 1) / 2.0, dtype=float),
-                z=Z.mean(axis=0),
-                mode="lines",
-                line=dict(color="white", width=6),
-                name="Mean path",
-                hovertemplate="Day=%{x}<br>Mean=$%{z:,.2f}<extra></extra>",
-            )
-        )
-        fig_surface.update_layout(**self._plotly_theme(), **surface_theme)
-
-        path_surf = OUT / f"mc_surface_{self.eng.ticker}.html"
-        fig_surface.write_html(
-            str(path_surf),
-            include_plotlyjs="cdn",
-            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
-        )
-        rlog(f"  [green]OK[/green] 3D interactive surface -> [cyan]{path_surf}[/cyan]")
-        if show:
-            fig_surface.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
-
-        if no_anim:
-            return
-
-        legacy_frames = OUT / f"frames_{self.eng.ticker}"
-        if legacy_frames.exists():
-            for png_file in legacy_frames.glob("frame_*.png"):
-                try:
-                    png_file.unlink()
-                except OSError:
-                    pass
-            try:
-                legacy_frames.rmdir()
-            except OSError:
-                pass
-
-        n_paths = len(paths)
-        rng = np.random.default_rng(17)
-        idx = rng.choice(len(paths), n_paths, replace=False)
-        sample_paths = paths[idx]
-
-        fig_paths = go.Figure()
-        for i in range(n_paths):
-            final_val = sample_paths[i, -1]
-            line_color = C["green"] if final_val > S0 * 1.35 else C["red"] if final_val < S0 * 0.75 else C["blue"]
-            fig_paths.add_trace(
-                go.Scatter3d(
-                    x=x,
-                    y=np.full_like(x, i, dtype=float),
-                    z=sample_paths[i],
-                    mode="lines",
-                    line=dict(color=line_color, width=3),
-                    opacity=0.72,
-                    showlegend=False,
-                    hovertemplate="Day=%{x}<br>Path=#" + str(i + 1) + "<br>Price=$%{z:,.2f}<extra></extra>",
-                )
-            )
-
-        fig_paths.add_trace(
-            go.Scatter3d(
-                x=x,
-                y=np.full_like(x, (n_paths - 1) / 2.0, dtype=float),
-                z=sample_paths.mean(axis=0),
-                mode="lines",
-                line=dict(color=C["amber"], width=9),
-                name="Sample mean",
-                hovertemplate="Day=%{x}<br>Mean=$%{z:,.2f}<extra></extra>",
-            )
-        )
-        fig_paths.add_trace(
-            go.Surface(
-                x=np.array([[0, N], [0, N]], dtype=float),
-                y=np.array([[0, 0], [n_paths - 1, n_paths - 1]], dtype=float),
-                z=np.full((2, 2), S0, dtype=float),
-                colorscale=[[0, C["red"]], [1, C["red"]]],
-                opacity=0.12,
-                showscale=False,
-                hoverinfo="skip",
-            )
-        )
-
-        y_ratio_paths = max(float(n_paths - 1), 1.0) / x_span
-        fig_paths.update_layout(
-            **self._plotly_theme(),
-            scene=dict(
-                xaxis=dict(title="Days", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"]),
-                yaxis=dict(title="Path #", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"]),
-                zaxis=dict(title="Price ($)", backgroundcolor=C["bg2"], gridcolor=C["border"],
-                           zerolinecolor=C["border"], color=C["muted"]),
-                aspectmode="manual",
-                aspectratio=dict(x=1.45, y=max(0.36, y_ratio_paths), z=max(0.28, z_ratio * 0.92)),
-                camera=dict(eye=dict(x=1.65, y=-1.35, z=0.78)),
-            ),
-            margin=dict(l=20, r=20, b=20, t=96),
-            title=dict(
-                text=(
-                    f"<b>3D Path Explorer</b> - {self.eng.ticker}<br>"
-                    f"{n_paths} sampled paths - drag to rotate - zoom/pan enabled"
-                ),
-                x=0.5, y=0.97, xanchor="center", yanchor="top",
-                font=dict(size=17, color=C["title"]),
-            ),
-        )
-
-        path_anim = OUT / f"mc_3d_{self.eng.ticker}.html"
-        fig_paths.write_html(
-            str(path_anim),
-            include_plotlyjs="cdn",
-            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
-        )
-        rlog(f"  [green]OK[/green] 3D movable path explorer -> [cyan]{path_anim}[/cyan]")
-        if show:
-            fig_paths.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
-
-    def render_mc_diagnostics(self, adv: dict, show=True):
-        n_grid = np.array(adv["convergence"]["n_grid"], dtype=float)
-        est = np.array(adv["convergence"]["estimates"], dtype=float)
-        se = np.array(adv["convergence"]["stderrs"], dtype=float)
-        bs = float(adv.get("black_scholes_call", np.nan))
-
-        fig = make_subplots(
-            rows=2,
-            cols=2,
-            subplot_titles=(
-                "Convergence: Price Estimate",
-                "Convergence: Std Error Decay",
-                "Variance Reduction Ratios",
-                "Advanced Option Prices",
-            ),
-            vertical_spacing=0.16,
-            horizontal_spacing=0.10,
-            specs=[[{"type": "xy"}, {"type": "xy"}], [{"type": "xy"}, {"type": "xy"}]],
-        )
-
-        fig.add_trace(go.Scatter(
-            x=n_grid,
-            y=est,
-            mode="lines+markers",
-            name="MC estimate",
-            line=dict(color=C["cyan"], width=2),
-            marker=dict(size=7),
-            error_y=dict(type="data", array=1.96 * se, visible=True, color=C["muted"], thickness=1),
-            hovertemplate="N=%{x}<br>Price=$%{y:.4f}<extra></extra>",
-        ), row=1, col=1)
-        if np.isfinite(bs):
-            fig.add_hline(
-                y=bs,
-                line_color=C["amber"],
-                line_dash="dash",
-                row=1,
-                col=1,
-                annotation_text=f"BS ${bs:.4f}",
-                annotation_font=dict(color=C["amber"], size=9),
-            )
-
-        ref = se[0] * np.sqrt(n_grid[0] / n_grid)
-        fig.add_trace(go.Scatter(
-            x=n_grid,
-            y=se,
-            mode="lines+markers",
-            name="stderr",
-            line=dict(color=C["green"], width=2),
-            marker=dict(size=7),
-            hovertemplate="N=%{x}<br>SE=%{y:.5f}<extra></extra>",
-        ), row=1, col=2)
-        fig.add_trace(go.Scatter(
-            x=n_grid,
-            y=ref,
-            mode="lines",
-            name="O(1/sqrt(N))",
-            line=dict(color=C["purple"], width=2, dash="dash"),
-            hovertemplate="N=%{x}<br>Ref=%{y:.5f}<extra></extra>",
-        ), row=1, col=2)
-
-        labels = ["Antithetic", "QMC Sobol", "Control Variate"]
-        vals = [
-            float(adv["variance_reduction_ratio_antithetic"]),
-            float(adv["variance_reduction_ratio_qmc"]),
-            float(adv["variance_reduction_ratio_cv"]),
-        ]
-        fig.add_trace(go.Bar(
-            x=labels,
-            y=vals,
-            marker=dict(color=[C["blue"], C["green"], C["amber"]]),
-            name="Variance ratio",
-            text=[f"{v:.3f}" for v in vals],
-            textposition="outside",
-            hovertemplate="%{x}<br>Ratio=%{y:.4f}<extra></extra>",
-        ), row=2, col=1)
-        fig.add_hline(
-            y=1.0,
-            line_color=C["red"],
-            line_dash="dot",
-            row=2,
-            col=1,
-            annotation_text="Baseline 1.0",
-            annotation_font=dict(color=C["red"], size=9),
-        )
-
-        price_labels = ["Euro Pseudo", "Euro Anti", "Euro QMC", "Euro CV", "Asian", "Barrier", "American"]
-        price_vals = [
-            adv["euro_plain"]["price"],
-            adv["euro_antithetic"]["price"],
-            adv["euro_qmc"]["price"],
-            adv["euro_control_variate"]["price"],
-            adv["asian_call"]["price"],
-            adv["barrier_up_out_call"]["price"],
-            adv["american_put_lsmc"]["price"],
-        ]
-        price_se = [
-            adv["euro_plain"]["stderr"],
-            adv["euro_antithetic"]["stderr"],
-            adv["euro_qmc"]["stderr"],
-            adv["euro_control_variate"]["stderr"],
-            adv["asian_call"]["stderr"],
-            adv["barrier_up_out_call"]["stderr"],
-            adv["american_put_lsmc"]["stderr"],
-        ]
-        fig.add_trace(go.Bar(
-            x=price_labels,
-            y=price_vals,
-            marker=dict(color=[C["cyan"], C["blue"], C["green"], C["amber"], C["purple"], C["red"], C["muted"]]),
-            error_y=dict(type="data", array=price_se, visible=True, thickness=1),
-            name="Price +- SE",
-            hovertemplate="%{x}<br>Price=$%{y:.4f}<extra></extra>",
-        ), row=2, col=2)
-
-        layout = self._plotly_theme()
-        layout.update(dict(
-            title=dict(
-                text=(
-                    f"<b>Monte Carlo Diagnostics</b> - {self.eng.ticker}<br>"
-                    f"Convergence slope={adv['convergence']['loglog_slope']:+.3f} (target -0.500)"
-                ),
-                x=0.5, y=0.98, xanchor="center", yanchor="top",
-                font=dict(size=15, color=C["title"]),
-            ),
-            height=980,
-            margin=dict(l=70, r=60, t=110, b=110),
-            showlegend=True,
-            legend=dict(orientation="h", yanchor="bottom", y=-0.10, xanchor="center", x=0.5),
-        ))
-        fig.update_layout(**layout)
-
-        fig.update_xaxes(title_text="Paths (N)", row=1, col=1)
-        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
-        fig.update_xaxes(title_text="Paths (N, log)", type="log", row=1, col=2)
-        fig.update_yaxes(title_text="Std Error (log)", type="log", row=1, col=2)
-        fig.update_xaxes(title_text="Method", row=2, col=1)
-        fig.update_yaxes(title_text="Variance Ratio", row=2, col=1)
-        fig.update_xaxes(title_text="Instrument", row=2, col=2)
-        fig.update_yaxes(title_text="Price ($)", row=2, col=2)
-
-        for r in [1, 2]:
-            for c in [1, 2]:
-                fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=c)
-                fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=c)
-
-        path_out = OUT / f"mc_diagnostics_{self.eng.ticker}.html"
-        fig.write_html(str(path_out), include_plotlyjs="cdn", config={"displayModeBar": True, "scrollZoom": True})
-        rlog(f"  [green]OK[/green] MC diagnostics -> [cyan]{path_out}[/cyan]")
+        rlog(f"  [green]OK[/green] History detail -> [cyan]{path_out}[/cyan]")
         if show:
             fig.show()
         return fig
 
-    def render_all(self, st: dict, N: int, paths: np.ndarray, show=True, no3d=False, adv: dict | None = None):
-        rlog("  [1/3] Rendering Plotly main dashboard ...")
-        self.render_main(st, N, show=show, adv=adv)
-        if adv:
-            rlog("  [2/3] Rendering Plotly MC diagnostics ...")
-            self.render_mc_diagnostics(adv, show=show)
-        if not no3d:
-            rlog("  [3/3] Rendering Plotly 3D views ...")
-            self.render_3d(paths, N, show=show)
-
-
-
-
-# RICH STATS TABLE
-def print_stats_table(eng: GBMEngine, st: dict, N: int, adv: dict | None = None):
-    adv = adv or {}
-    if not HAS_RICH:
-        print(f"\n{'=' * 55}")
-        print(f"  {eng.ticker}  Monte Carlo Results  ({N}d horizon)")
-        print(f"{'=' * 55}")
-        for k, v in [
-            ("S0 (last close)", f"${st['S0']:,.2f}"),
-            ("Drift mu", f"{eng.mu:+.2%}"),
-            ("Volatility sigma", f"{eng.sigma:.2%}"),
-            ("Horizon", f"{N} trading days"),
-            ("Simulations", str(st['paths'].shape[0])),
-            ("Mean final", f"${st['mean']:,.2f}"),
-            ("Mean stderr", f"${st['mean_stderr']:,.4f}"),
-            ("Median final", f"${st['median']:,.2f}"),
-            ("P(profit)", f"{st['prob_up']:.1%}"),
-            ("P(profit) stderr", f"{st['prob_up_stderr']:.3%}"),
-            ("VaR 95%", f"-${st['var95']:,.2f}"),
-            ("CVaR 95%", f"-${st['cvar95']:,.2f}"),
-            ("Sharpe", f"{st['sharpe']:.3f}"),
-        ]:
-            print(f"  {k:<24} {v}")
-        if adv:
-            print("\n  Advanced MC Pricing")
-            print(f"  {'European Call (anti)':<24} ${adv['euro_antithetic']['price']:,.4f} +- {adv['euro_antithetic']['stderr']:.4f}")
-            print(f"  {'Asian Call':<24} ${adv['asian_call']['price']:,.4f} +- {adv['asian_call']['stderr']:.4f}")
-            print(f"  {'Barrier Up-Out':<24} ${adv['barrier_up_out_call']['price']:,.4f} +- {adv['barrier_up_out_call']['stderr']:.4f}")
-            print(f"  {'American Put (LSMC)':<24} ${adv['american_put_lsmc']['price']:,.4f} +- {adv['american_put_lsmc']['stderr']:.4f}")
-            print(f"  {'Convergence slope':<24} {adv['convergence']['loglog_slope']:.3f} (target -0.5)")
-        return
-
-    tbl = Table(
-        title=f"[bold cyan]{eng.ticker}[/bold cyan]  -  Monte Carlo Results  "
-              f"[dim]({N}d / {N//21}mo horizon)[/dim]",
-        box=box.SIMPLE_HEAVY, border_style="dim",
-        show_header=True, header_style="bold dim"
-    )
-    tbl.add_column("Metric",  style="dim",  width=24)
-    tbl.add_column("Value",   style="bold", justify="right", width=18)
-    tbl.add_column("Context", style="dim",  width=32)
-
-    def row(lbl, val, ctx=""):
-        tbl.add_row(lbl, val, ctx)
-    def gr(v): return "green" if v else "red"
-
-    row("Last close",      f"[cyan]${st['S0']:,.2f}[/cyan]", "calibration anchor")
-    row("Drift  mu",        f"[{gr(eng.mu>=0)}]{eng.mu:+.2%}[/{gr(eng.mu>=0)}]",
-                           "annualised log-return drift")
-    row("Volatility  sigma",   f"[yellow]{eng.sigma:.2%}[/yellow]", "annualised std")
-    row("Horizon",         f"{N}d  /  {N//21}mo", f"T = {N/252:.2f} years")
-    row("Simulations",     f"{st['paths'].shape[0]}", "GBM paths")
-    tbl.add_section()
-    row("Mean (T)",        f"[{gr(st['mean']>st['S0'])}]${st['mean']:,.2f}[/{gr(st['mean']>st['S0'])}]")
-    row("Mean stderr",      f"${st['mean_stderr']:,.4f}", "MC standard error")
-    row("95% CI (mean)",    f"${st['mean']-st['mean_ci95_halfwidth']:,.2f} .. ${st['mean']+st['mean_ci95_halfwidth']:,.2f}")
-    row("Median (T)",      f"[yellow]${st['median']:,.2f}[/yellow]")
-    row("5th / 95th",      f"${st['terminal_pct']['5']:,.2f}  /  ${st['terminal_pct']['95']:,.2f}")
-    tbl.add_section()
-    row("P(profit)",       f"[{gr(st['prob_up']>0.5)}]{st['prob_up']:.1%}[/{gr(st['prob_up']>0.5)}]",
-                           "paths ending above S0")
-    row("P(profit) stderr", f"{st['prob_up_stderr']:.3%}", "binomial MC error bar")
-    row("P(double)",       f"[purple]{st['prob_2x']:.1%}[/purple]", "above 2xS0")
-    row("P(halve)",        f"[red]{st['prob_half']:.1%}[/red]", "below 1/2S0")
-    tbl.add_section()
-    row("VaR  95% / 99%",  f"[red]-${st['var95']:,.2f}  /  -${st['var99']:,.2f}[/red]")
-    row("CVaR 95% / 99%",  f"[red]-${st['cvar95']:,.2f}  /  -${st['cvar99']:,.2f}[/red]")
-    tbl.add_section()
-    row("Sharpe ratio",    f"[{gr(st['sharpe']>1)}]{st['sharpe']:+.3f}[/{gr(st['sharpe']>1)}]",
-                           "vs 5% risk-free rate")
-    row("Sortino ratio",   f"[{gr(st['sortino']>1)}]{st['sortino']:+.3f}[/{gr(st['sortino']>1)}]")
-    row("Calmar ratio",    f"[{gr(st['calmar']>0.5)}]{st['calmar']:+.3f}[/{gr(st['calmar']>0.5)}]")
-    row("Hist max DD",     f"[red]{st['hist_max_dd']:.2%}[/red]")
-    row("Win rate",        f"[{gr(st['win_rate']>0.5)}]{st['win_rate']:.1%}[/{gr(st['win_rate']>0.5)}]")
-    row("Avg win / loss",  f"[green]+${st['avg_win']:,.2f}[/green]  /  [red]-${st['avg_loss']:,.2f}[/red]")
-    tbl.add_section()
-    row("Log-return skew", f"{st['lr_skew']:+.3f}", ">0 = right tail")
-    row("Excess kurtosis", f"{st['lr_kurt']:+.3f}", ">0 = fatter tails")
-    row("Jarque-Bera p",   f"{st['jb_p']:.4f}", "< 0.05 -> reject normality")
-
-    if adv:
-        tbl.add_section()
-        row("Euro call (pseudo)", f"${adv['euro_plain']['price']:,.4f}", f"SE={adv['euro_plain']['stderr']:.4f}")
-        row("Euro call (anti)", f"${adv['euro_antithetic']['price']:,.4f}", f"SE={adv['euro_antithetic']['stderr']:.4f}")
-        row("Euro call (QMC)", f"${adv['euro_qmc']['price']:,.4f}", f"SE={adv['euro_qmc']['stderr']:.4f}")
-        row("Euro call (CV)", f"${adv['euro_control_variate']['price']:,.4f}", f"SE={adv['euro_control_variate']['stderr']:.4f}")
-        row("Asian call", f"${adv['asian_call']['price']:,.4f}", f"SE={adv['asian_call']['stderr']:.4f}")
-        row("Barrier up-out", f"${adv['barrier_up_out_call']['price']:,.4f}", f"SE={adv['barrier_up_out_call']['stderr']:.4f}")
-        row("American put LSMC", f"${adv['american_put_lsmc']['price']:,.4f}", f"SE={adv['american_put_lsmc']['stderr']:.4f}")
-        row("Pathwise Delta", f"{adv['pathwise_greeks']['delta']:+.4f}", f"SE={adv['pathwise_greeks']['delta_stderr']:.4f}")
-        row("Pathwise Vega", f"{adv['pathwise_greeks']['vega']:+.4f}", f"SE={adv['pathwise_greeks']['vega_stderr']:.4f}")
-        row("Conv slope", f"{adv['convergence']['loglog_slope']:+.3f}", "expected -0.500")
-        row("Anti variance ratio", f"{adv['variance_reduction_ratio_antithetic']:.3f}", "SE(anti)^2 / SE(pseudo)^2")
-        row("QMC variance ratio", f"{adv['variance_reduction_ratio_qmc']:.3f}", "SE(qmc)^2 / SE(pseudo)^2")
-        row("CV variance ratio", f"{adv['variance_reduction_ratio_cv']:.3f}", "SE(cv)^2 / SE(pseudo)^2")
-        row("Multi-asset corr", f"{adv['multi_asset_emp_corr']:+.3f}", "empirical corr (2-asset sample)")
-
-    con.print(tbl)
-
-    p = OUT / f"mc_report_{eng.ticker}.txt"
-    with open(p, "w") as f:
-        f.write(f"Monte Carlo Report - {eng.ticker}\n")
-        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        for k, v in [
-            ("Ticker", eng.ticker), ("S0", f"${st['S0']:,.2f}"),
-            ("Mu", f"{eng.mu:+.2%}"), ("Sigma", f"{eng.sigma:.2%}"),
-            ("N_days", str(N)), ("Sims", str(st['paths'].shape[0])),
-            ("Mean", f"${st['mean']:,.2f}"), ("Median", f"${st['median']:,.2f}"),
-            ("Mean_stderr", f"${st['mean_stderr']:,.4f}"),
-            ("P_profit", f"{st['prob_up']:.1%}"),
-            ("P_profit_stderr", f"{st['prob_up_stderr']:.3%}"),
-            ("VaR95", f"-${st['var95']:,.2f}"), ("CVaR95", f"-${st['cvar95']:,.2f}"),
-            ("Sharpe", f"{st['sharpe']:.3f}"), ("Sortino", f"{st['sortino']:.3f}"),
-            ("Calmar", f"{st['calmar']:.3f}"), ("MaxDD", f"{st['hist_max_dd']:.2%}"),
-        ]:
-            f.write(f"{k:<20} {v}\n")
-        if adv:
-            f.write("\nAdvanced_Monte_Carlo\n")
-            f.write(f"{'Euro_call_pseudo':<20} ${adv['euro_plain']['price']:,.4f} | SE={adv['euro_plain']['stderr']:.4f}\n")
-            f.write(f"{'Euro_call_anti':<20} ${adv['euro_antithetic']['price']:,.4f} | SE={adv['euro_antithetic']['stderr']:.4f}\n")
-            f.write(f"{'Euro_call_qmc':<20} ${adv['euro_qmc']['price']:,.4f} | SE={adv['euro_qmc']['stderr']:.4f}\n")
-            f.write(f"{'Euro_call_cv':<20} ${adv['euro_control_variate']['price']:,.4f} | SE={adv['euro_control_variate']['stderr']:.4f}\n")
-            f.write(f"{'Asian_call':<20} ${adv['asian_call']['price']:,.4f} | SE={adv['asian_call']['stderr']:.4f}\n")
-            f.write(f"{'Barrier_up_out':<20} ${adv['barrier_up_out_call']['price']:,.4f} | SE={adv['barrier_up_out_call']['stderr']:.4f}\n")
-            f.write(f"{'American_put_lsmc':<20} ${adv['american_put_lsmc']['price']:,.4f} | SE={adv['american_put_lsmc']['stderr']:.4f}\n")
-            f.write(f"{'Pathwise_delta':<20} {adv['pathwise_greeks']['delta']:+.4f} | SE={adv['pathwise_greeks']['delta_stderr']:.4f}\n")
-            f.write(f"{'Pathwise_vega':<20} {adv['pathwise_greeks']['vega']:+.4f} | SE={adv['pathwise_greeks']['vega_stderr']:.4f}\n")
-            f.write(f"{'Convergence_slope':<20} {adv['convergence']['loglog_slope']:+.4f}\n")
-            f.write(f"{'Var_ratio_anti':<20} {adv['variance_reduction_ratio_antithetic']:.4f}\n")
-            f.write(f"{'Var_ratio_qmc':<20} {adv['variance_reduction_ratio_qmc']:.4f}\n")
-            f.write(f"{'Var_ratio_cv':<20} {adv['variance_reduction_ratio_cv']:.4f}\n")
-            f.write(f"{'Multi_asset_corr':<20} {adv['multi_asset_emp_corr']:+.4f}\n")
-    rlog(f"  [green]OK[/green] Report saved -> [cyan]{p}[/cyan]")
-
-
-
-
-############################################################################################################################################################################################
-
-
-
-# MAIN
-def get_args():
-    p = argparse.ArgumentParser(
-        description="Monte Carlo Stock Terminal  v4.0",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
-    p.add_argument("--ticker",   default="",    help="Stock ticker, e.g. AAPL")
-    p.add_argument("--sims",     type=int, default=0,   help="Number of simulations")
-    p.add_argument("--days",     type=int, default=0,   help="Forecast horizon (trading days)")
-    p.add_argument("--seed",     type=int, default=42,  help="Random seed for reproducible simulation")
-    p.add_argument("--no3d",     action="store_true",   help="Skip 3D visualisations")
-    p.add_argument("--period",   default="2y",          help="Historical data period (yfinance)")
-    p.add_argument(
-        "--renderer",
-        choices=["matplotlib", "plotly", "both"],
-        default="",
-        help=(
-            "Rendering engine:\n"
-            "  matplotlib  -> static PNG files (publication-quality)\n"
-            "  plotly      -> interactive HTML files (hover/zoom/pan)\n"
-            "  both        -> generate both sets of outputs\n"
-            "  (default: prompt user if not set)"
-        )
-    )
-    return p.parse_args()
-
-def _prompt(msg, default, cast=str):
-    try:
-        raw = input(msg).strip()
-        return cast(raw) if raw else default
-    except (ValueError, EOFError):
-        return default
-
-def _choose_renderer(arg_renderer: str) -> str:
-    if arg_renderer in ("matplotlib", "plotly", "both"):
-        return arg_renderer
-
-    if HAS_RICH:
-        con.rule("[dim]Renderer[/dim]")
-        con.print("  Choose output renderer:")
-        con.print("  [cyan]1[/cyan] -> [bold]Plotly[/bold]      interactive HTML (hover, zoom, pan)")
-        con.print("  [cyan]2[/cyan] -> [bold]Matplotlib[/bold]  static PNG  (publication quality)")
-        con.print("  [cyan]3[/cyan] -> [bold]Both[/bold]        generate all outputs")
-        choice = _prompt("  Your choice [1/2/3, default 1]: ", "1")
-    else:
-        print("\nRenderer: 1=Plotly  2=Matplotlib  3=Both")
-        choice = _prompt("Choice [1]: ", "1")
-
-    return {"1": "plotly", "2": "matplotlib", "3": "both"}.get(choice.strip(), "plotly")
-
-
-def _run_advanced_pricing(eng: GBMEngine, N: int, nsims: int, seed: int) -> dict:
-    k_atm = eng.S0
-    pricing_sims = max(2000, nsims)
-    base = int(seed)
-
-    euro_plain = eng.price_european_option_mc(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 101,
-        random_method="pseudo", antithetic=False, control_variate=False,
-    )
-    euro_anti = eng.price_european_option_mc(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 102,
-        random_method="pseudo", antithetic=True, control_variate=False,
-    )
-    euro_qmc = eng.price_european_option_mc(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 103,
-        random_method="sobol", antithetic=False, control_variate=False,
-    )
-    euro_cv = eng.price_european_option_mc(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 104,
-        random_method="pseudo", antithetic=True, control_variate=True,
-    )
-    asian_call = eng.price_asian_option_mc(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 105,
-        option_type="call", random_method="pseudo", antithetic=True, control_variate=True,
-    )
-    barrier_call = eng.price_barrier_option_mc(
-        K=k_atm, barrier=1.2 * eng.S0, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 106,
-        option_type="call", barrier_type="up-and-out", random_method="pseudo", antithetic=True,
-    )
-    american_put = eng.price_american_option_lsmc(
-        K=k_atm, r=0.05, N=N, num_sim=max(3000, pricing_sims),
-        seed=base + 107,
-        option_type="put", random_method="pseudo", antithetic=True,
-    )
-    greeks = eng.pathwise_greeks(
-        K=k_atm, r=0.05, N=N, num_sim=pricing_sims,
-        seed=base + 108,
-        option_type="call", random_method="pseudo", antithetic=True,
-    )
-    conv = eng.convergence_analysis(
-        K=k_atm, r=0.05, N=N, option_type="call",
-        n_grid=[250, 500, 1000, 2000, 4000, 8000],
-        antithetic=True, random_method="pseudo", control_variate=False,
-        seed=base + 109,
-    )
-    multi_paths = eng.simulate_multi_asset_cholesky(
-        S0_vec=np.array([eng.S0, eng.S0 * 0.95]),
-        mu_vec=np.array([eng.mu, eng.mu * 0.9]),
-        sigma_vec=np.array([eng.sigma, eng.sigma * 1.1]),
-        corr=np.array([[1.0, 0.55], [0.55, 1.0]]),
-        N=N,
-        num_sim=max(2000, nsims),
-        seed=base + 110,
-        risk_neutral_rate=None,
-    )
-    ret_a = np.log(multi_paths[:, -1, 0] / multi_paths[:, 0, 0])
-    ret_b = np.log(multi_paths[:, -1, 1] / multi_paths[:, 0, 1])
-    emp_corr = float(np.corrcoef(ret_a, ret_b)[0, 1])
-
-    return {
-        "euro_plain": euro_plain,
-        "euro_antithetic": euro_anti,
-        "euro_qmc": euro_qmc,
-        "euro_control_variate": euro_cv,
-        "asian_call": asian_call,
-        "barrier_up_out_call": barrier_call,
-        "american_put_lsmc": american_put,
-        "pathwise_greeks": greeks,
-        "convergence": conv,
-        "black_scholes_call": eng.black_scholes_price(K=k_atm, T=N / 252.0, r=0.05, option_type="call"),
-        "variance_reduction_ratio_antithetic": (euro_anti["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
-        "variance_reduction_ratio_qmc": (euro_qmc["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
-        "variance_reduction_ratio_cv": (euro_cv["stderr"] ** 2) / (euro_plain["stderr"] ** 2 + 1e-16),
-        "multi_asset_emp_corr": emp_corr,
-    }
-
-def main():
-    args = get_args()
-    print_banner()
-
-    if HAS_RICH:
-        con.rule("[dim]Configuration[/dim]")
-    else:
-        plain_line()
-
-    ticker   = (args.ticker or
-                _prompt("  Ticker symbol [default: AAPL]: ", "AAPL")).upper().strip()
-    N        = (args.days or
-                _prompt("  Forecast days  [default: 252 = 1 year]: ", 252, int))
-    nsims    = (args.sims or
-                _prompt("  Simulations    [default: 500]: ", 500, int))
-    renderer = _choose_renderer(args.renderer)
-
-    N     = max(1, N)
-    nsims = max(1, nsims)
-
-    if HAS_RICH:
-        con.rule()
-    else:
-        plain_line()
-
-    eng = GBMEngine(ticker)
-    adv = {}
-
-    if HAS_RICH:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=35),
-            TimeElapsedColumn(),
-            console=con, transient=True
-        ) as prog:
-            t1 = prog.add_task("Fetching data ...",            total=4)
-            eng.fetch(args.period, seed=args.seed);            prog.advance(t1)
-            t2 = prog.add_task("Calibrating parameters ...",   total=4)
-            eng.calibrate();                                  prog.advance(t2)
-            t3 = prog.add_task(f"Simulating {nsims} paths ...", total=4)
-            paths, tpts = eng.simulate(N=N, num_sim=nsims, seed=args.seed)
-            prog.advance(t3)
-            t4 = prog.add_task("Computing statistics ...",     total=4)
-            st = eng.compute_stats(paths);                    prog.advance(t4)
-    else:
-        print("  Fetching data ...")
-        eng.fetch(args.period, seed=args.seed)
-        print("  Calibrating ...")
-        eng.calibrate()
-        print(f"  Simulating {nsims} paths x {N} days ...")
-        paths, tpts = eng.simulate(N=N, num_sim=nsims, seed=args.seed)
-        print("  Computing statistics ...")
-        st = eng.compute_stats(paths)
-
-    adv = _run_advanced_pricing(eng=eng, N=N, nsims=nsims, seed=args.seed)
-
-    rlog(f"\n  [green]OK[/green] Calibrated:  "
-         f"S0=${eng.S0:,.2f}  mu={eng.mu:+.2%}  sigma={eng.sigma:.2%}")
-
-    if HAS_RICH:
-        con.rule("[dim]Results[/dim]")
-    print_stats_table(eng, st, N, adv=adv)
-
-    if HAS_RICH:
-        con.rule(f"[dim]Visualisations  -  renderer=[cyan]{renderer}[/cyan][/dim]")
-    else:
-        print(f"\n  Renderer: {renderer}")
-
-    use_mpl     = renderer in ("matplotlib", "both")
-    use_plotly  = renderer in ("plotly", "both")
-
-    if use_plotly and not HAS_PLOTLY:
-        rlog("  [yellow]WARN Plotly not installed - switching to Matplotlib[/yellow]")
-        use_plotly = False
-        use_mpl    = True
-
-    figs = []
-
-    if use_mpl:
-        rlog("  [bold]Matplotlib[/bold] charts ...")
-        mpl_dash = MatplotlibDashboard(eng)
-        figs = mpl_dash.render_all(st, N, paths, show=True, no3d=args.no3d, adv=adv)
-
-    if use_plotly:
-        rlog("  [bold]Plotly[/bold] interactive ...")
-        ply_dash = PlotlyDashboard(eng)
-        ply_dash.render_all(st, N, paths, show=False, no3d=args.no3d, adv=adv)
-
-    if HAS_RICH:
-        con.rule()
-        con.print(f"  [bold green]Done.[/bold green]  "
-                  f"All outputs saved to [cyan]{OUT}/[/cyan]")
-    else:
-        print(f"\n  Done. Outputs saved to {OUT}/")
-
-if __name__ == "__main__":
-    main()
 
