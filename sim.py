@@ -1,46 +1,20 @@
-﻿"""
+"""
 MONTE CARLO STOCK TERMINAL
 
-Install:  pip install numpy pandas matplotlib plotly scipy yfinance rich
+Install:  pip install numpy plotly scipy pandas yfinance rich
 Run:      python test.py
-Flags:    --ticker AAPL --sims 500 --renderer plotly|matplotlib|both
+Flags:    --ticker AAPL --sims 500 --renderer plotly
 """
 
 import argparse
+import json
 import os
 import sys
 import warnings
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
-import matplotlib
-
-def _select_matplotlib_backend():
-    """Select a GUI backend; fail fast if none is available."""
-    forced = os.environ.get("MPLBACKEND")
-    if forced:
-        return
-
-    candidates = ["TkAgg", "QtAgg", "Qt5Agg"]
-    for backend in candidates:
-        try:
-            matplotlib.use(backend, force=True)
-            return
-        except Exception:
-            continue
-
-    raise RuntimeError(
-        "No interactive Matplotlib backend is available. "
-        "Install Tk or Qt bindings (for example: pip install tk or pip install pyqt5), "
-        "then re-run."
-    )
-
-_select_matplotlib_backend()
-import matplotlib.gridspec as gridspec
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib.colors import LinearSegmentedColormap
-from matplotlib.ticker import FuncFormatter
 import numpy as np
 import pandas as pd
 from scipy import stats as scipy_stats
@@ -54,6 +28,12 @@ try:
     HAS_PLOTLY = True
 except ImportError:
     HAS_PLOTLY = False
+
+try:
+    import matplotlib.pyplot as plt
+    HAS_MPL = True
+except ImportError:
+    HAS_MPL = False
 
 warnings.filterwarnings("ignore")
 
@@ -100,58 +80,156 @@ C = {
     "pink":    "#f778ba",
 }
 
-matplotlib.rcParams.update({
-    "figure.facecolor":  C["bg"],
-    "axes.facecolor":    C["bg"],
-    "axes.edgecolor":    C["border"],
-    "axes.labelcolor":   C["muted"],
-    "axes.titlecolor":   C["title"],
-    "axes.titlesize":    9,
-    "axes.titlepad":     8,
-    "xtick.color":       C["muted"],
-    "ytick.color":       C["muted"],
-    "xtick.labelsize":   7.5,
-    "ytick.labelsize":   7.5,
-    "text.color":        C["text"],
-    "grid.color":        C["border"],
-    "grid.linestyle":    "--",
-    "grid.alpha":        0.35,
-    "figure.dpi":        100,
-    "font.family":       "monospace",
-    "legend.facecolor":  C["bg2"],
-    "legend.edgecolor":  C["border"],
-    "legend.labelcolor": C["text"],
-    "legend.fontsize":   7,
-    "legend.framealpha": 0.9,
-    "axes.spines.top":   False,
-    "axes.spines.right": False,
-})
+def _compute_rsi(price: pd.Series, window: int = 14) -> pd.Series:
+    delta = price.diff()
+    gain = delta.clip(lower=0).rolling(window).mean()
+    loss = (-delta.clip(upper=0)).rolling(window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    return 100 - 100 / (1 + rs)
 
-_dollar = FuncFormatter(lambda x, _: f"${x:,.0f}")
-_pct    = FuncFormatter(lambda x, _: f"{x:.1%}")
+def _find_bearish_rsi_divergences(price: pd.Series, rsi: pd.Series, lookback: int = 20) -> list[pd.Timestamp]:
+    hits: list[pd.Timestamp] = []
+    if len(price) <= lookback:
+        return hits
 
-def _is_non_interactive_backend() -> bool:
-    backend = str(matplotlib.get_backend()).lower()
-    return "agg" in backend or "pdf" in backend or "svg" in backend or "ps" in backend
+    rolling_price_max = price.rolling(lookback).max().shift(1)
+    rolling_rsi_max = rsi.rolling(lookback).max().shift(1)
+    for idx in range(lookback, len(price)):
+        p_now = float(price.iloc[idx])
+        p_prev_max = rolling_price_max.iloc[idx]
+        r_now = float(rsi.iloc[idx]) if np.isfinite(rsi.iloc[idx]) else np.nan
+        r_prev_max = rolling_rsi_max.iloc[idx]
+        if not np.isfinite(p_prev_max) or not np.isfinite(r_now) or not np.isfinite(r_prev_max):
+            continue
+        if p_now > p_prev_max and r_now < r_prev_max - 2.5:
+            hits.append(price.index[idx])
+    return hits[-6:]
 
-def _style(ax, grid=True):
-    ax.set_facecolor(C["bg"])
-    for spine in ax.spines.values():
-        spine.set_color(C["border"])
-        spine.set_linewidth(0.7)
-    if grid:
-        ax.grid(True, alpha=0.25, color=C["border"], linestyle="--", linewidth=0.5)
+def _history_market_data(ticker: str, idx: pd.Index) -> pd.DataFrame:
+    if HAS_YF:
+        try:
+            raw = yf.Ticker(ticker).history(period="2y")
+            cols = [c for c in ["Open", "Close", "Volume"] if c in raw.columns]
+            if cols:
+                out = raw[cols].reindex(idx)
+                if "Close" not in out:
+                    out["Close"] = np.nan
+                out["Close"] = out["Close"].fillna(method="ffill").fillna(method="bfill")
+                if "Open" not in out:
+                    out["Open"] = out["Close"].shift(1).fillna(out["Close"])
+                else:
+                    out["Open"] = out["Open"].fillna(out["Close"].shift(1)).fillna(out["Close"])
+                if "Volume" not in out:
+                    out["Volume"] = 0.0
+                out["Volume"] = out["Volume"].fillna(0.0)
+                return out
+        except Exception:
+            pass
 
-def _tag(ax, txt, x=0.02, y=0.96):
-    ax.text(x, y, txt, transform=ax.transAxes, fontsize=6,
-            color=C["muted"], va="top", ha="left", fontfamily="monospace",
-            bbox=dict(fc=C["bg"], ec=C["border"], alpha=0.8, pad=2, linewidth=0.5))
+    rng = np.random.default_rng(7)
+    close = pd.Series(np.nan, index=idx, dtype=float)
+    open_ = pd.Series(np.nan, index=idx, dtype=float)
+    volume = pd.Series(np.abs(rng.standard_normal(len(idx))) * 5e7 + 3e7, index=idx, dtype=float)
+    return pd.DataFrame({"Open": open_, "Close": close, "Volume": volume}, index=idx)
 
-def _vline(ax, x, color, label=None, lw=1.5, ls="--"):
-    ax.axvline(x, color=color, lw=lw, ls=ls, label=label, zorder=6)
+def _contiguous_true_ranges(mask: np.ndarray) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    start = None
+    for i, val in enumerate(mask):
+        if val and start is None:
+            start = i
+        elif not val and start is not None:
+            ranges.append((start, i - 1))
+            start = None
+    if start is not None:
+        ranges.append((start, len(mask) - 1))
+    return ranges
 
-def _hline(ax, y, color, label=None, lw=1.5, ls="--", alpha=1.0):
-    ax.axhline(y, color=color, lw=lw, ls=ls, label=label, zorder=6, alpha=alpha)
+def _ljung_box_pvalue(sample: np.ndarray, max_lag: int) -> float:
+    n = len(sample)
+    if n <= max_lag + 1 or max_lag <= 0:
+        return float("nan")
+    centered = sample - np.mean(sample)
+    denom = float(np.sum(centered**2)) + 1e-12
+    q_stat = 0.0
+    for lag in range(1, max_lag + 1):
+        acf = float(np.sum(centered[:-lag] * centered[lag:]) / denom)
+        q_stat += (acf * acf) / max(n - lag, 1)
+    q_stat *= n * (n + 2)
+    return float(scipy_stats.chi2.sf(q_stat, df=max_lag))
+
+def _rng_diagnostic_sample(n: int = 4096, seed: int = 123) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return rng.standard_normal(n)
+
+def _rng_uniform_pairs(n: int = 4096, seed: int = 123) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    u = rng.random(n + 1)
+    return u[:-1], u[1:]
+
+def _compute_rng_diagnostics(sample: np.ndarray, max_lag: int = 40) -> dict:
+    sample = np.asarray(sample, dtype=float)
+    sample = sample[np.isfinite(sample)]
+    n = len(sample)
+    if n == 0:
+        return {
+            "sample": sample,
+            "sorted_sample": np.array([]),
+            "theoretical": np.array([]),
+            "diag_min": -1.0,
+            "diag_max": 1.0,
+            "ks_band": 0.0,
+            "acf_lags": np.array([]),
+            "acf_vals": np.array([]),
+            "acf_conf": 0.0,
+            "acf_flags": np.array([], dtype=bool),
+            "lag1": float("nan"),
+            "ljung_box_p": float("nan"),
+            "shapiro_p": float("nan"),
+            "anderson_stat": float("nan"),
+        }
+
+    p = (np.arange(1, n + 1) - 0.5) / n
+    theoretical = norm.ppf(p)
+    sorted_sample = np.sort(sample)
+    band = 1.36 / np.sqrt(n)
+    diag_min = float(min(theoretical.min(), sorted_sample.min()))
+    diag_max = float(max(theoretical.max(), sorted_sample.max()))
+
+    lag_max = min(max_lag, n - 2)
+    centered = sample - sample.mean()
+    denom = float(np.sum(centered**2)) + 1e-12
+    lags = np.arange(1, lag_max + 1)
+    acf_vals = np.array([float(np.sum(centered[:-lag] * centered[lag:]) / denom) for lag in lags], dtype=float)
+    acf_conf = 1.96 / np.sqrt(n)
+    acf_flags = np.abs(acf_vals) > acf_conf
+
+    shapiro_sample = sample[: min(5000, n)]
+    try:
+        shapiro_p = float(scipy_stats.shapiro(shapiro_sample).pvalue)
+    except Exception:
+        shapiro_p = float("nan")
+    try:
+        anderson_stat = float(scipy_stats.anderson(sample, dist="norm").statistic)
+    except Exception:
+        anderson_stat = float("nan")
+
+    return {
+        "sample": sample,
+        "sorted_sample": sorted_sample,
+        "theoretical": theoretical,
+        "diag_min": diag_min,
+        "diag_max": diag_max,
+        "ks_band": band,
+        "acf_lags": lags,
+        "acf_vals": acf_vals,
+        "acf_conf": acf_conf,
+        "acf_flags": acf_flags,
+        "lag1": float(acf_vals[0]) if len(acf_vals) else float("nan"),
+        "ljung_box_p": _ljung_box_pvalue(sample, lag_max),
+        "shapiro_p": shapiro_p,
+        "anderson_stat": anderson_stat,
+    }
 
 def _surface_z_bounds(Z: np.ndarray, S0: float) -> tuple[float, float]:
     z_min = float(np.nanmin(Z))
@@ -163,23 +241,6 @@ def _surface_z_bounds(Z: np.ndarray, S0: float) -> tuple[float, float]:
     hi = max(hi, lo + 1.0)
     return lo, hi
 
-def _style_3d_axis(ax, N: int, n: int, z_low: float, z_high: float):
-    ax.set_facecolor(C["bg"])
-    for plane in [ax.xaxis, ax.yaxis, ax.zaxis]:
-        plane.pane.fill = False
-        plane.pane.set_edgecolor(C["border"])
-        plane.pane.set_alpha(0.07)
-    ax.set_xlim(0, N)
-    ax.set_ylim(0, max(0, n - 1))
-    ax.set_zlim(z_low, z_high)
-    x_span = max(float(N), 1.0)
-    y_span = max(float(n - 1), 1.0)
-    base_span = max(x_span, y_span)
-    # Keep geometric perspective stable regardless of dollar scale in z.
-    ax.set_box_aspect((x_span, y_span, base_span * 0.58))
-    ax.view_init(elev=24, azim=-132)
-    ax.tick_params(colors=C["muted"], labelsize=8)
-    ax.grid(True, alpha=0.10, color=C["border"])
 # RICH HELPERS
 def rlog(msg, style=""):
     import re
@@ -224,6 +285,11 @@ def print_banner():
 
 def plain_line(width: int = 55):
     print("-" * width)
+
+############################################################################################################################################################################################
+
+
+############################################################################################################################################################################################
 
 ############################################################################################################################################################################################
 
