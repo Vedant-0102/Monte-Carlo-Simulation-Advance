@@ -2817,3 +2817,488 @@ class PlotlyDashboard:
         return fig
 
 
+    def render_rng_diagnostics(self, show=False):
+        rng_diag = _compute_rng_diagnostics(_rng_diagnostic_sample())
+        uni_x, uni_y = _rng_uniform_pairs()
+        qx = rng_diag["theoretical"]
+        qy = rng_diag["sorted_sample"]
+        band = rng_diag["ks_band"]
+        lags = rng_diag["acf_lags"]
+        acf_vals = rng_diag["acf_vals"]
+        conf = rng_diag["acf_conf"]
+        colors = np.where(rng_diag["acf_flags"], C["red"], C["blue"])
+        n_sample = len(rng_diag["sample"])
+
+        fig = make_subplots(
+            rows=1, cols=3,
+            subplot_titles=(
+                "Q-Q Validation of RNG Draws",
+                "ACF Independence Check",
+                "Random Uniformity Scatter",
+            ),
+            horizontal_spacing=0.09,
+            specs=[[{"type": "xy"}, {"type": "xy"}, {"type": "xy"}]],
+        )
+
+        fig.add_trace(go.Scatter(
+            x=qx, y=qx + band, mode="lines", name="KS upper",
+            line=dict(color="#9aa4b2", width=0.0), showlegend=False, hoverinfo="skip"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=qx, y=qx - band, mode="lines", name="KS band",
+            fill="tonexty", fillcolor="rgba(154,164,178,0.18)",
+            line=dict(color="#9aa4b2", width=0.0), hoverinfo="skip"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=qx, y=qy, mode="markers", name="Sim quantiles",
+            marker=dict(color=C["blue"], size=5, opacity=0.52),
+            hovertemplate="Theoretical: %{x:.3f}<br>Simulated: %{y:.3f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=[rng_diag["diag_min"], rng_diag["diag_max"]],
+            y=[rng_diag["diag_min"], rng_diag["diag_max"]],
+            mode="lines", name="45deg ref",
+            line=dict(color=C["red"], width=1.8, dash="dash"),
+            hoverinfo="skip"
+        ), row=1, col=1)
+        fig.add_annotation(
+            xref="x domain", yref="y domain",
+            x=0.02, y=0.98,
+            text="S-shape = fat tails | bow = skew",
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["muted"], size=9, family="Consolas, Menlo, monospace"),
+            row=1, col=1,
+        )
+
+        fig.add_hrect(y0=-conf, y1=conf, fillcolor="rgba(154,164,178,0.10)", line_width=0, row=1, col=2)
+        fig.add_trace(go.Bar(
+            x=lags, y=acf_vals, name="ACF", marker_color=colors,
+            hovertemplate="Lag %{x}<br>rho=%{y:.4f}<extra></extra>"
+        ), row=1, col=2)
+        fig.add_trace(go.Scatter(
+            x=lags, y=acf_vals, mode="markers", name="Lag markers",
+            marker=dict(color=colors, size=6, line=dict(color=C["bg"], width=0.5)),
+            showlegend=False,
+            hovertemplate="Lag %{x}<br>rho=%{y:.4f}<extra></extra>"
+        ), row=1, col=2)
+        fig.add_hline(y=0, line_color=C["muted"], line_width=1.0, row=1, col=2)
+        fig.add_hline(y=conf, line_color=C["red"], line_dash="dash", line_width=1.0, row=1, col=2)
+        fig.add_hline(y=-conf, line_color=C["red"], line_dash="dash", line_width=1.0, row=1, col=2)
+        if len(lags):
+            fig.add_annotation(
+                x=int(lags[0]), y=float(acf_vals[0]), row=1, col=2,
+                text=f"lag1={acf_vals[0]:+.3f}", showarrow=True, arrowhead=2,
+                ax=28, ay=-22, arrowcolor=C["amber"],
+                font=dict(color=C["amber"], size=9),
+            )
+
+        fig.add_trace(go.Scatter(
+            x=uni_x, y=uni_y, mode="markers", name="U_t vs U_t+1",
+            marker=dict(color=C["cyan"], size=3, opacity=0.30),
+            hovertemplate="U_t=%{x:.3f}<br>U_t+1=%{y:.3f}<extra></extra>"
+        ), row=1, col=3)
+        fig.add_shape(
+            type="line",
+            x0=0, x1=1, y0=0.5, y1=0.5,
+            xref="x3", yref="y3",
+            line=dict(color=C["muted"], width=1, dash="dot")
+        )
+        fig.add_shape(
+            type="line",
+            x0=0.5, x1=0.5, y0=0, y1=1,
+            xref="x3", yref="y3",
+            line=dict(color=C["muted"], width=1, dash="dot")
+        )
+        fig.add_annotation(
+            xref="x3 domain", yref="y3 domain",
+            x=0.02, y=0.98,
+            text="Cloud should fill the square without bands",
+            showarrow=False,
+            align="left",
+            bgcolor="rgba(13,17,23,0.78)",
+            bordercolor=C["border"],
+            borderwidth=1,
+            font=dict(color=C["muted"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        layout = self._plotly_theme()
+        layout.update(dict(
+            title=dict(
+                text=(f"<b>RNG Diagnostics</b> - {self.eng.ticker}<br>"
+                      f"<span style='font-size:11px;color:{C['muted']}'>N={n_sample} | SW p={rng_diag['shapiro_p']:.3g} | A-D={rng_diag['anderson_stat']:.3f} | Ljung-Box p={rng_diag['ljung_box_p']:.3g}</span>"),
+                x=0.5, y=0.96, xanchor="center", yanchor="top",
+                font=dict(size=15, color=C["title"]),
+            ),
+            height=700,
+            margin=dict(l=70, r=70, t=140, b=80),
+            legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="center", x=0.5,
+                        font=dict(size=10), bgcolor="rgba(13,17,23,0.82)", bordercolor=C["border"], borderwidth=1),
+        ))
+        fig.update_layout(**layout)
+        for ann in fig.layout.annotations:
+            if ann.text in {"Q-Q Validation of RNG Draws", "ACF Independence Check", "Random Uniformity Scatter"}:
+                ann.font = dict(size=12, color=C["title"])
+        fig.update_xaxes(title_text="Theoretical quantiles N(0,1)", row=1, col=1)
+        fig.update_yaxes(title_text="Simulated sample quantiles", row=1, col=1)
+        fig.update_xaxes(title_text="Lag k (1-40)", row=1, col=2)
+        fig.update_yaxes(title_text="Autocorrelation rho(k)", row=1, col=2)
+        fig.update_xaxes(title_text="U_t", range=[0, 1], row=1, col=3)
+        fig.update_yaxes(title_text="U_t+1", range=[0, 1], row=1, col=3, scaleanchor="x3", scaleratio=1)
+        for c in [1, 2, 3]:
+            fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=1, col=c)
+            fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=1, col=c)
+
+        path_out = OUT / f"mc_rng_diagnostics_{self.eng.ticker}.html"
+        fig_html = fig.to_html(
+            include_plotlyjs="cdn",
+            full_html=False,
+            config={"displayModeBar": True, "scrollZoom": True},
+        )
+        page_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RNG Diagnostics - {self.eng.ticker}</title>
+  <style>
+    html, body {{
+      margin: 0;
+      min-height: 100%;
+      background: {C["bg"]};
+      color: {C["text"]};
+      font-family: Consolas, Menlo, monospace;
+    }}
+    body {{
+      min-height: 100vh;
+    }}
+    .plot-shell {{
+      background: {C["bg"]};
+    }}
+  </style>
+</head>
+<body>
+  <div class="plot-shell">{fig_html}</div>
+</body>
+</html>
+"""
+        path_out.write_text(page_html, encoding="utf-8")
+        rlog(f"  [green]OK[/green] RNG diagnostics -> [cyan]{path_out}[/cyan]")
+        if show:
+            fig.show()
+        return fig
+
+    def _paths_with_params(self, Z: np.ndarray, N: int, S0: float | None = None, mu: float | None = None, sigma: float | None = None) -> np.ndarray:
+        S0_use = float(self.eng.S0 if S0 is None else S0)
+        mu_use = float(self.eng.mu if mu is None else mu)
+        sigma_use = float(self.eng.sigma if sigma is None else sigma)
+        T = N / 252.0
+        return self.eng._paths_from_normals(Z=Z[:, :N], drift=mu_use, sigma=sigma_use, S0=S0_use, T=T)
+
+    def render_sensitivity_suite(self, N: int, show=False):
+        num_sim = 1200
+        rng = np.random.default_rng(123)
+        max_horizon = max(N, int(round(N * 1.5)))
+        Z = self.eng._generate_normals(num_sim=num_sim, N=max_horizon, rng=rng, random_method="pseudo", antithetic=False)
+        base_paths = self._paths_with_params(Z, N=N)
+        base_output = float(base_paths[:, -1].mean())
+
+        lr = self.eng.log_ret.dropna()
+        roll = self.eng.roll_vol.dropna() if self.eng.roll_vol is not None else pd.Series(dtype=float)
+        mu_se = float(lr.std() * np.sqrt(252 / max(len(lr), 1))) if len(lr) > 2 else max(abs(self.eng.mu) * 0.2, 0.03)
+        sigma_p10 = float(roll.quantile(0.10)) if len(roll) > 10 else max(self.eng.sigma * 0.75, 0.05)
+        sigma_p90 = float(roll.quantile(0.90)) if len(roll) > 10 else self.eng.sigma * 1.25
+        specs = [
+            ("Spot S0", self.eng.S0 * 0.90, self.eng.S0 * 1.10),
+            ("Drift mu", self.eng.mu - mu_se, self.eng.mu + mu_se),
+            ("Vol sigma", max(0.03, sigma_p10), max(max(0.05, sigma_p10), sigma_p90)),
+            ("Horizon N", max(21, int(round(N * 0.60))), max(42, int(round(N * 1.40)))),
+        ]
+        tornado_rows = []
+        for name, low_v, high_v in specs:
+            if name == "Spot S0":
+                low_out = float(self._paths_with_params(Z, N=N, S0=low_v)[:, -1].mean())
+                high_out = float(self._paths_with_params(Z, N=N, S0=high_v)[:, -1].mean())
+            elif name == "Drift mu":
+                low_out = float(self._paths_with_params(Z, N=N, mu=low_v)[:, -1].mean())
+                high_out = float(self._paths_with_params(Z, N=N, mu=high_v)[:, -1].mean())
+            elif name == "Vol sigma":
+                low_out = float(self._paths_with_params(Z, N=N, sigma=low_v)[:, -1].mean())
+                high_out = float(self._paths_with_params(Z, N=N, sigma=high_v)[:, -1].mean())
+            else:
+                low_out = float(self._paths_with_params(Z, N=int(low_v))[:, -1].mean())
+                high_out = float(self._paths_with_params(Z, N=int(high_v))[:, -1].mean())
+            tornado_rows.append({
+                "name": name,
+                "low_out": low_out,
+                "high_out": high_out,
+                "range": high_out - low_out,
+            })
+        tornado_rows.sort(key=lambda row: row["range"], reverse=True)
+        labels = [row["name"] for row in tornado_rows]
+        low_seg = [base_output - row["low_out"] for row in tornado_rows]
+        high_seg = [row["high_out"] - base_output for row in tornado_rows]
+        low_outs = [row["low_out"] for row in tornado_rows]
+        high_outs = [row["high_out"] for row in tornado_rows]
+
+        fig_tornado = go.Figure()
+        fig_tornado.add_trace(go.Bar(
+            y=labels, x=low_seg, base=low_outs, orientation="h", name="Downside swing",
+            marker_color="rgba(248,81,73,0.72)",
+            customdata=np.column_stack([low_outs, high_outs]),
+            hovertemplate="%{y}<br>Low output=$%{customdata[0]:,.2f}<br>Base=$" + f"{base_output:,.2f}" + "<br>High output=$%{customdata[1]:,.2f}<extra></extra>",
+        ))
+        fig_tornado.add_trace(go.Bar(
+            y=labels, x=high_seg, base=[base_output] * len(labels), orientation="h", name="Upside swing",
+            marker_color="rgba(63,185,80,0.72)",
+            customdata=np.column_stack([low_outs, high_outs]),
+            hovertemplate="%{y}<br>Low output=$%{customdata[0]:,.2f}<br>Base=$" + f"{base_output:,.2f}" + "<br>High output=$%{customdata[1]:,.2f}<extra></extra>",
+        ))
+        for idx, row in enumerate(tornado_rows):
+            fig_tornado.add_annotation(x=row["low_out"], y=row["name"], text=f"${row['low_out']:,.0f}", showarrow=False,
+                                       xanchor="right", yanchor="middle", xshift=-6,
+                                       font=dict(size=9, color=C["red"]))
+            fig_tornado.add_annotation(x=row["high_out"], y=row["name"], text=f"${row['high_out']:,.0f}", showarrow=False,
+                                       xanchor="left", yanchor="middle", xshift=6,
+                                       font=dict(size=9, color=C["green"]))
+        fig_tornado.add_vline(x=base_output, line_color=C["amber"], line_dash="dash", line_width=1.8)
+        fig_tornado.update_layout(
+            **self._plotly_theme(),
+            title=dict(
+                text=f"<b>Tornado Sensitivity</b><br><span style='font-size:11px;color:{C['muted']}'>Base output = mean terminal price E[S(T)] = ${base_output:,.2f}; widest bar = hedge first</span>",
+                x=0.5, xanchor="center", font=dict(size=15, color=C["title"])
+            ),
+            barmode="overlay",
+            height=520,
+            margin=dict(l=90, r=70, t=95, b=60),
+        )
+        fig_tornado.update_xaxes(title_text="Output range when one input is varied", gridcolor=C["border"], zerolinecolor=C["border"], tickprefix="$")
+        fig_tornado.update_yaxes(autorange="reversed", gridcolor=C["border"], zerolinecolor=C["border"])
+
+        shock_avg = Z[:, :N].mean(axis=1)
+        shock_disp = Z[:, :N].std(axis=1)
+        terminal_shock = Z[:, N - 1]
+        final_price = base_paths[:, -1]
+        terminal_return = final_price / self.eng.S0 - 1.0
+        running_max = np.maximum.accumulate(base_paths, axis=1)
+        max_dd = ((base_paths - running_max) / running_max).min(axis=1)
+        pair_df = pd.DataFrame({
+            "Shock avg": shock_avg,
+            "Shock disp": shock_disp,
+            "Terminal shock": terminal_shock,
+            "Final price": final_price,
+            "Max drawdown": max_dd,
+            "Return bucket": pd.qcut(terminal_return, 4, labels=["Q1 low", "Q2", "Q3", "Q4 high"]),
+        })
+        fig_pair = px.scatter_matrix(
+            pair_df,
+            dimensions=["Shock avg", "Shock disp", "Terminal shock", "Final price", "Max drawdown"],
+            color="Return bucket",
+            color_discrete_map={"Q1 low": C["blue"], "Q2": C["cyan"], "Q3": C["amber"], "Q4 high": C["red"]},
+            opacity=0.30,
+        )
+        fig_pair.update_traces(diagonal_visible=True, showupperhalf=False, marker=dict(size=4))
+        fig_pair.update_layout(
+            **self._plotly_theme(),
+            title=dict(
+                text=f"<b>Scatter Matrix / Pair Plot</b><br><span style='font-size:11px;color:{C['muted']}'>Path-level shock summaries vs outputs; colors show terminal return quartiles</span>",
+                x=0.5, xanchor="center", font=dict(size=15, color=C["title"])
+            ),
+            height=880,
+            margin=dict(l=50, r=30, t=95, b=40),
+            dragmode="select",
+        )
+
+        sigma_grid = np.linspace(max(0.03, self.eng.sigma * 0.6), self.eng.sigma * 1.4, 19)
+        pdp_vals = []
+        ice_idx = np.linspace(0, num_sim - 1, 10, dtype=int)
+        ice_curves = []
+        for idx in ice_idx:
+            ice_curves.append([])
+        for s in sigma_grid:
+            tmp_paths = self._paths_with_params(Z, N=N, sigma=float(s))
+            terminal_vals = tmp_paths[:, -1]
+            pdp_vals.append(float(terminal_vals.mean()))
+            for k, idx in enumerate(ice_idx):
+                ice_curves[k].append(float(terminal_vals[idx]))
+        mid = len(sigma_grid) // 2
+        pdp_slope = (pdp_vals[mid + 1] - pdp_vals[mid - 1]) / (sigma_grid[mid + 1] - sigma_grid[mid - 1]) if len(sigma_grid) > 2 else 0.0
+        fig_pdp = go.Figure()
+        for k, idx in enumerate(ice_idx):
+            fig_pdp.add_trace(go.Scatter(
+                x=sigma_grid, y=ice_curves[k], mode="lines", name=f"ICE {k+1}",
+                line=dict(color=C["blue"], width=1.0), opacity=0.28, showlegend=False,
+                hovertemplate="sigma=%{x:.2%}<br>Path terminal=$%{y:,.2f}<extra></extra>",
+            ))
+        fig_pdp.add_trace(go.Scatter(
+            x=sigma_grid, y=pdp_vals, mode="lines+markers", name="PDP",
+            line=dict(color=C["amber"], width=3), marker=dict(size=6),
+            hovertemplate="sigma=%{x:.2%}<br>E[S(T)|sigma]=$%{y:,.2f}<extra></extra>",
+        ))
+        fig_pdp.add_vline(x=self.eng.sigma, line_color=C["green"], line_dash="dash", line_width=1.6)
+        fig_pdp.add_annotation(
+            xref="x domain", yref="y domain", x=0.98, y=0.98,
+            text=f"Midpoint slope dE/dsigma ≈ {pdp_slope:,.1f}<br>Base sigma={self.eng.sigma:.2%}",
+            showarrow=False, align="right",
+            bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+        fig_pdp.update_layout(
+            **self._plotly_theme(),
+            title=dict(
+                text=f"<b>PDP + ICE</b><br><span style='font-size:11px;color:{C['muted']}'>Terminal price response to volatility sigma with shared shocks held fixed</span>",
+                x=0.5, xanchor="center", font=dict(size=15, color=C["title"])
+            ),
+            height=520,
+            margin=dict(l=70, r=60, t=95, b=60),
+        )
+        fig_pdp.update_xaxes(title_text="Input sigma", tickformat=".1%", gridcolor=C["border"], zerolinecolor=C["border"])
+        fig_pdp.update_yaxes(title_text="Expected / path terminal price", tickprefix="$", gridcolor=C["border"], zerolinecolor=C["border"])
+
+        tornado_html = fig_tornado.to_html(include_plotlyjs="cdn", full_html=False, config={"displayModeBar": True, "scrollZoom": True})
+        pair_html = fig_pair.to_html(include_plotlyjs=False, full_html=False, config={"displayModeBar": True, "scrollZoom": True})
+        pdp_html = fig_pdp.to_html(include_plotlyjs=False, full_html=False, config={"displayModeBar": True, "scrollZoom": True})
+        page_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Monte Carlo Sensitivity - {self.eng.ticker}</title>
+  <style>
+    :root {{
+      --bg: {C["bg"]};
+      --bg2: {C["bg2"]};
+      --border: {C["border"]};
+      --muted: {C["muted"]};
+      --text: {C["text"]};
+      --title: {C["title"]};
+    }}
+    html, body {{
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Consolas, Menlo, monospace;
+    }}
+    .page {{
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px 20px 36px;
+    }}
+    .hero, .card {{
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: rgba(22,27,34,0.96);
+      box-shadow: 0 18px 48px rgba(0,0,0,0.20);
+    }}
+    .hero {{
+      padding: 20px 22px;
+      margin-bottom: 18px;
+    }}
+    .hero h1 {{
+      margin: 0 0 8px;
+      color: var(--title);
+      font-size: 28px;
+    }}
+    .hero p {{
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 13px;
+      max-width: 980px;
+    }}
+    .card {{
+      padding: 10px 10px 2px;
+      margin-bottom: 18px;
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>Sensitivity & Interaction Lab</h1>
+      <p>These views use shared Monte Carlo shocks so the visual differences come from the input being changed, not fresh randomness. Tornado ranks which parameter moves output most, the pair plot highlights path-level non-linearity, and PDP + ICE shows whether volatility response is linear or convex.</p>
+    </section>
+    <section class="card">{tornado_html}</section>
+    <section class="card">{pair_html}</section>
+    <section class="card">{pdp_html}</section>
+  </div>
+</body>
+</html>
+"""
+        path_out = OUT / f"mc_sensitivity_{self.eng.ticker}.html"
+        path_out.write_text(page_html, encoding="utf-8")
+        rlog(f"  [green]OK[/green] Sensitivity lab -> [cyan]{path_out}[/cyan]")
+        if show:
+            fig_tornado.show()
+            fig_pair.show()
+            fig_pdp.show()
+        return path_out
+
+    def render_main(self, st: dict, N: int, show=True, adv: dict | None = None):
+        adv = adv or {}
+        h  = self.eng.history
+        S0 = self.eng.S0
+        ma20  = h.rolling(20).mean()
+        ma50  = h.rolling(50).mean()
+        std20 = h.rolling(20).std()
+        bb_upper = ma20 + 2 * std20
+        bb_lower = ma20 - 2 * std20
+        band_width = (bb_upper - bb_lower) / ma20.replace(0, np.nan)
+        squeeze_cutoff = float(band_width.dropna().quantile(0.10)) if band_width.notna().any() else np.nan
+        squeeze_mask = (band_width <= squeeze_cutoff).fillna(False).to_numpy()
+        w52 = min(252, len(h))
+        hi52_idx = h.iloc[-w52:].idxmax()
+        lo52_idx = h.iloc[-w52:].idxmin()
+        hi52 = float(h.loc[hi52_idx])
+        lo52 = float(h.loc[lo52_idx])
+        cross_up = (ma20 > ma50) & (ma20.shift(1) <= ma50.shift(1))
+        cross_dn = (ma20 < ma50) & (ma20.shift(1) >= ma50.shift(1))
+
+        fig = make_subplots(
+            rows=5, cols=3,
+            subplot_titles=(
+                f"Historical Price  ({self.eng.ticker})",
+                "Terminal Distribution S(T)",
+                "Log-Return Hist  Normal vs t",
+                "Monte Carlo Sample Paths",
+                "Price Path Fan",
+                "Density Heatmap (column-normalised)",
+                "Rolling 30d Volatility Regimes",
+                "Return Q-Q vs Normal",
+                "CDF / Exceedance Curve",
+                "Return / Risk Profile",
+                "Percentile Summary",
+                "Colour-coded Risk Metrics",
+                "Scenario Fan Chart",
+            ),
+            vertical_spacing=0.10,
+            horizontal_spacing=0.09,
+            specs=[
+                [{"type": "xy"}, {"type": "xy", "secondary_y": True}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}, {"type": "xy", "secondary_y": True}],
+                [{"type": "xy"}, {"type": "xy"}, {"type": "table"}],
+                [{"type": "xy", "colspan": 3}, None, None],
+            ],
+            row_heights=[0.19, 0.19, 0.19, 0.19, 0.24],
+        )
+
+        fig.add_trace(go.Scatter(
+            x=h.index, y=h.values, mode="lines", name="Close",
+            line=dict(color=C["blue"], width=2),
+            hovertemplate="Date: %{x}<br>Price: $%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index, y=ma20, mode="lines", name="MA-20",
+            line=dict(color=C["purple"], width=1.5),
+            hovertemplate="MA20: $%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index, y=ma50, mode="lines", name="MA-50",
+            line=dict(color=C["amber"], width=1.5, dash="dash"),
+            hovertemplate="MA50: $%{y:,.2f}<extra></extra>"
+        ), row=1, col=1)
+
