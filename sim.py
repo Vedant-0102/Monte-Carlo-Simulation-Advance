@@ -3886,3 +3886,1153 @@ class PlotlyDashboard:
                 ("BS call",      f"${adv['black_scholes_call']:,.4f}"),
             ])
 
+
+
+        def metric_fill(metric: str, value: str) -> str:
+            good = "#EAF3DE"
+            bad = "#FCEBEB"
+            neutral = "#FAEEDA"
+            num = None
+            try:
+                num = float(value.replace("$","").replace(",","").replace("%","").replace("+","").replace("Â±"," ").split()[0])
+            except Exception:
+                return neutral
+            if metric == "Sharpe":
+                return good if num > 1 else neutral if num >= 0.5 else bad
+            if metric == "Sortino":
+                return good if num > 1.5 else neutral if num >= 0.8 else bad
+            if metric == "Calmar":
+                return good if num > 0.5 else neutral if num >= 0.2 else bad
+            if metric.startswith("VaR") or metric.startswith("CVaR") or metric == "Avg Loss" or metric == "Max DrawDn":
+                return bad
+            if metric in {"P(Profit)", "P(Double)", "Win Rate"}:
+                return good if num > 55 else neutral if num >= 40 else bad
+            return neutral
+
+        left_fills = [metric_fill(k, v) for k, v in rows_left]
+        right_fills = [metric_fill(k, v) for k, v in rows_right]
+        fig.add_trace(go.Table(
+            header=dict(
+                values=["<b>RISK / PERF</b>", "<b>VALUE</b>", "<b>PROB / EXTRA</b>", "<b>VALUE</b>"],
+                fill_color=C["bg3"], font=dict(color=C["title"], size=10),
+                line_color=C["border"], align="left",
+                height=28,
+            ),
+            cells=dict(
+                values=[
+                    [r[0] for r in rows_left],
+                    [r[1] for r in rows_left],
+                    [r[0] for r in rows_right],
+                    [r[1] for r in rows_right],
+                ],
+                fill_color=[
+                    left_fills,
+                    left_fills,
+                    right_fills,
+                    right_fills,
+                ],
+                font=dict(color=[C["muted"], C["cyan"], C["muted"], C["amber"]], size=9.5),
+                line_color=C["border"], align="left", height=25,
+            )
+        ), row=4, col=3)
+
+        layout = self._plotly_theme()
+        layout.update(dict(
+            title=dict(
+                text=(f"<b>Monte Carlo Dashboard</b> - {self.eng.ticker}<br>"
+                      f"<span style='font-size:11px;color:{C['muted']}'>mu={self.eng.mu:+.2%} | sigma={self.eng.sigma:.2%} | "
+                      f"S0=${S0:,.2f} | {st['paths'].shape[0]} sims x {N}d</span>"),
+                x=0.5, y=0.985, xanchor="center", yanchor="top",
+                font=dict(size=15, color=C["title"])
+            ),
+            height=3020,
+            margin=dict(l=75, r=135, t=135, b=155),
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.04,
+                xanchor="center",
+                x=0.5,
+                font=dict(size=8.5),
+                bgcolor="rgba(13, 17, 23, 0.85)",
+                bordercolor=C["border"],
+                borderwidth=1,
+                tracegroupgap=4,
+                itemwidth=72
+            ),
+        ))
+        fig.update_layout(**layout)
+        for ann in fig.layout.annotations:
+            if ann.text in {
+                f"Historical Price  ({self.eng.ticker})",
+                "Terminal Distribution S(T)",
+                "Log-Return Hist  Normal vs t",
+                "Monte Carlo Sample Paths",
+                "Price Path Fan",
+                "Density Heatmap (column-normalised)",
+                "Rolling 30d Volatility Regimes",
+                "Return Q-Q vs Normal",
+                "CDF / Exceedance Curve",
+                "Return / Risk Profile",
+                "Percentile Summary",
+                "Colour-coded Risk Metrics",
+                "Scenario Fan Chart",
+            }:
+                ann.font = dict(size=12, color=C["title"])
+
+        # axis labels
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1, tickprefix="$")
+        fig.update_yaxes(title_text="Density", row=1, col=2, secondary_y=False)
+        fig.update_yaxes(title_text="Log density", type="log", row=1, col=2, secondary_y=True)
+        fig.update_xaxes(title_text="Return (%)", row=1, col=3,
+                         tickformat=".1%")
+        fig.update_xaxes(title_text="Trading Day", row=2, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=2, col=1, tickprefix="$")
+        fig.update_xaxes(title_text="Trading Day", row=2, col=2)
+        fig.update_yaxes(title_text="Price ($)", row=2, col=2, tickprefix="$")
+        fig.update_xaxes(title_text="Trading Day", row=2, col=3)
+        fig.update_yaxes(title_text="Price ($)", row=2, col=3, tickprefix="$")
+        fig.update_xaxes(title_text="Date", row=3, col=1)
+        fig.update_yaxes(title_text="Annual Vol", row=3, col=1, tickformat=".0%")
+        fig.update_xaxes(title_text="Theoretical quantiles N(0,1)", row=3, col=2)
+        fig.update_yaxes(title_text="Simulated terminal return z-score", row=3, col=2)
+        fig.update_xaxes(title_text="Outcome value S(T)", row=3, col=3)
+        fig.update_yaxes(title_text="P(S(T) <= x)", row=3, col=3, secondary_y=False)
+        fig.update_yaxes(title_text="P(S(T) > x)", type="log", row=3, col=3, secondary_y=True)
+        fig.update_xaxes(title_text="Terminal return", tickformat=".1%", row=4, col=1)
+        fig.update_yaxes(title_text="Density", row=4, col=1)
+        fig.update_xaxes(title_text="Outcome S(T)", row=4, col=2, tickprefix="$")
+        fig.update_yaxes(visible=False, row=4, col=2)
+        fig.update_xaxes(title_text="Trading Day", row=5, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=5, col=1, tickprefix="$")
+
+
+
+        # grid styling
+        for r in range(1, 6):
+            for c in range(1, 4):
+                if not ((r == 4 and c == 3) or (r == 5 and c != 1)):  # skip table and empty cells
+                    fig.update_xaxes(
+                        gridcolor=C["border"], zerolinecolor=C["border"],
+                        row=r, col=c
+                    )
+                    fig.update_yaxes(
+                        gridcolor=C["border"], zerolinecolor=C["border"],
+                        row=r, col=c
+                    )
+
+        path_out = OUT / f"mc_dashboard_{self.eng.ticker}.html"
+        fig.write_html(str(path_out), include_plotlyjs="cdn",
+                       config={"displayModeBar": True, "scrollZoom": True})
+        rlog(f"  [green]OK[/green] Dashboard -> [cyan]{path_out}[/cyan]")
+        if show: fig.show()
+        return fig
+
+    def render_dashboard6(self, st: dict, N: int, show=True):
+        h = self.eng.history
+        S0 = float(self.eng.S0)
+        ma20 = h.rolling(20).mean()
+        std20 = h.rolling(20).std()
+        bb_upper = ma20 + 2 * std20
+        bb_lower = ma20 - 2 * std20
+        rv = self.eng.log_ret.rolling(30).std() * np.sqrt(252)
+        ewma_var = self.eng.log_ret.pow(2).ewm(alpha=1 - 0.94, adjust=False).mean()
+        ewma_vol = np.sqrt(ewma_var) * np.sqrt(252)
+        finals = np.asarray(st["finals"], dtype=float)
+        lr = self.eng.log_ret.dropna()
+        paths_arr = np.asarray(st["paths"], dtype=float)
+        days = np.arange(paths_arr.shape[1], dtype=int)
+
+        fig = make_subplots(
+            rows=3, cols=2,
+            subplot_titles=(
+                "Price + Bollinger Bands",
+                "Final Distribution + KDE",
+                "Log-Return Distribution",
+                "MC Paths + Bands",
+                "Rolling Volatility",
+                "Q-Q Plot",
+            ),
+            vertical_spacing=0.11,
+            horizontal_spacing=0.10,
+        )
+
+        price_custom = np.column_stack([
+            ma20.to_numpy(dtype=float),
+            bb_upper.to_numpy(dtype=float),
+            bb_lower.to_numpy(dtype=float),
+        ])
+        fig.add_trace(go.Scatter(
+            x=h.index, y=h.values, mode="lines", name="Close",
+            line=dict(color=C["cyan"], width=2.2),
+            customdata=price_custom,
+            hovertemplate="Date: %{x|%d %b %Y}<br>Price: $%{y:.2f}<br>MA20: $%{customdata[0]:.2f}<br>BB Upper: $%{customdata[1]:.2f}<br>BB Lower: $%{customdata[2]:.2f}<extra></extra>",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index, y=ma20, mode="lines", name="MA20",
+            line=dict(color=C["blue"], width=1.5),
+            customdata=np.column_stack([h.to_numpy(dtype=float)]),
+            hovertemplate="Date: %{x|%d %b %Y}<br>MA20: $%{y:.2f}<br>Close: $%{customdata[0]:.2f}<extra></extra>",
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index, y=bb_upper, mode="lines", name="BB Upper",
+            line=dict(color=C["purple"], width=1.0, dash="dot"),
+            hovertemplate="Date: %{x|%d %b %Y}<br>BB Upper: $%{y:.2f}<extra></extra>",
+            showlegend=False,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=h.index, y=bb_lower, mode="lines", name="BB Band",
+            line=dict(color=C["purple"], width=1.0, dash="dot"),
+            fill="tonexty", fillcolor="rgba(163,113,247,0.10)",
+            hovertemplate="Date: %{x|%d %b %Y}<br>BB Lower: $%{y:.2f}<extra></extra>",
+        ), row=1, col=1)
+
+        fd_bins = int(np.clip(np.sqrt(max(len(finals), 1)), 20, 100))
+        kde_x = np.linspace(finals.min(), finals.max(), 240)
+        kde_y = scipy_stats.gaussian_kde(finals)(kde_x)
+        fig.add_trace(go.Histogram(
+            x=finals, nbinsx=fd_bins, histnorm="probability density", name="Final prices",
+            marker=dict(color=C["blue"], line=dict(width=0)),
+            opacity=0.72,
+            hovertemplate="Terminal price: $%{x:.2f}<br>Density: %{y:.4f}<extra></extra>",
+        ), row=1, col=2)
+        fig.add_trace(go.Scatter(
+            x=kde_x, y=kde_y, mode="lines", name="KDE",
+            line=dict(color=C["amber"], width=2.2),
+            hovertemplate="Terminal price: $%{x:.2f}<br>KDE: %{y:.4f}<extra></extra>",
+        ), row=1, col=2)
+
+        x_lr = np.linspace(lr.min(), lr.max(), 260)
+        mu_r = float(lr.mean())
+        sd_r = float(lr.std() + 1e-12)
+        fig.add_trace(go.Histogram(
+            x=lr, nbinsx=60, histnorm="probability density", name="Log-return hist",
+            marker=dict(color=C["cyan"], line=dict(width=0)), opacity=0.72,
+            hovertemplate="Log return: %{x:.2%}<br>Density: %{y:.4f}<extra></extra>",
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=x_lr, y=norm.pdf(x_lr, mu_r, sd_r), mode="lines", name="Normal fit",
+            line=dict(color=C["red"], width=2.0),
+            hovertemplate="Log return: %{x:.2%}<br>Normal PDF: %{y:.4f}<extra></extra>",
+        ), row=2, col=1)
+
+        sample_n = min(24, paths_arr.shape[0])
+        sample_idx = np.random.default_rng(11).choice(paths_arr.shape[0], sample_n, replace=False)
+        for path_id, idx in enumerate(sample_idx, start=1):
+            path = paths_arr[idx]
+            fig.add_trace(go.Scatter(
+                x=days, y=path, mode="lines", name=f"Path {path_id}",
+                line=dict(color="rgba(88,166,255,0.22)", width=1),
+                hovertemplate="Day %{x}<br>Price: $%{y:.2f}<extra></extra>",
+                showlegend=False,
+            ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["95"], mode="lines", name="P95",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            hovertemplate="Day %{x}<br>P95: $%{y:.2f}<extra></extra>",
+            showlegend=False,
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["5"], mode="lines", name="P5-P95 band",
+            fill="tonexty", fillcolor="rgba(88,166,255,0.12)",
+            line=dict(color="rgba(0,0,0,0)", width=0),
+            hovertemplate="Day %{x}<br>P5: $%{y:.2f}<extra></extra>",
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["bands"]["50"], mode="lines", name="Median",
+            line=dict(color=C["amber"], width=2.4),
+            hovertemplate="Day %{x}<br>Median: $%{y:.2f}<extra></extra>",
+        ), row=2, col=2)
+        fig.add_trace(go.Scatter(
+            x=days, y=st["mean_path"], mode="lines", name="Mean path",
+            line=dict(color=C["green"], width=2.6),
+            hovertemplate="Day %{x}<br>Mean: $%{y:.2f}<extra></extra>",
+        ), row=2, col=2)
+
+        vol_custom = np.column_stack([ewma_vol.to_numpy(dtype=float)])
+        fig.add_trace(go.Scatter(
+            x=rv.index, y=rv.values, mode="lines", name="Rolling vol",
+            line=dict(color=C["amber"], width=1.8),
+            customdata=vol_custom,
+            hovertemplate="Date: %{x|%d %b %Y}<br>Rolling vol: %{y:.1%}<br>EWMA vol: %{customdata[0]:.1%}<extra></extra>",
+        ), row=3, col=1)
+        fig.add_trace(go.Scatter(
+            x=ewma_vol.index, y=ewma_vol.values, mode="lines", name="EWMA vol",
+            line=dict(color=C["purple"], width=1.6, dash="dot"),
+            customdata=np.column_stack([rv.reindex(ewma_vol.index).to_numpy(dtype=float)]),
+            hovertemplate="Date: %{x|%d %b %Y}<br>EWMA vol: %{y:.1%}<br>Rolling vol: %{customdata[0]:.1%}<extra></extra>",
+        ), row=3, col=1)
+
+        terminal_r = np.log(finals / S0)
+        terminal_r_std = (terminal_r - terminal_r.mean()) / (terminal_r.std() + 1e-12)
+        p = (np.arange(1, len(terminal_r_std) + 1) - 0.5) / len(terminal_r_std)
+        q_theory = norm.ppf(p)
+        q_sample = np.sort(terminal_r_std)
+        fig.add_trace(go.Scatter(
+            x=q_theory, y=q_sample, mode="markers", name="Q-Q sample",
+            marker=dict(color=C["blue"], size=4, opacity=0.68),
+            hovertemplate="Theoretical z: %{x:.3f}<br>Sample z: %{y:.3f}<extra></extra>",
+        ), row=3, col=2)
+        ql = np.array([q_theory[0], q_theory[-1]])
+        fig.add_trace(go.Scatter(
+            x=ql, y=ql, mode="lines", name="45deg ref",
+            line=dict(color=C["red"], width=1.8, dash="dash"),
+            hovertemplate="Theoretical z: %{x:.3f}<br>Reference: %{y:.3f}<extra></extra>",
+        ), row=3, col=2)
+
+        layout = self._plotly_theme()
+        layout.update(dict(
+            title=dict(
+                text=(f"<b>Quant 6-Panel Dashboard</b> - {self.eng.ticker}<br>"
+                      f"<span style='font-size:11px;color:{C['muted']}'>Cross-hover on shared date panels | {paths_arr.shape[0]} sims x {N}d</span>"),
+                x=0.5, y=0.985, xanchor="center", yanchor="top",
+                font=dict(size=15, color=C["title"])
+            ),
+            height=1580,
+            margin=dict(l=70, r=70, t=125, b=90),
+            hovermode="closest",
+            legend=dict(orientation="h", yanchor="bottom", y=-0.08, xanchor="center", x=0.5,
+                        font=dict(size=9), bgcolor="rgba(13,17,23,0.82)", bordercolor=C["border"], borderwidth=1),
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    direction="right",
+                    x=0.01,
+                    y=1.10,
+                    xanchor="left",
+                    yanchor="bottom",
+                    buttons=[
+                        dict(label="Linear Price", method="relayout", args=[{"yaxis.type": "linear"}]),
+                        dict(label="Log Price", method="relayout", args=[{"yaxis.type": "log"}]),
+                    ],
+                )
+            ],
+        ))
+        fig.update_layout(**layout)
+
+        fig.update_xaxes(matches="x", row=3, col=1)
+        for row, col in [(1, 1), (3, 1)]:
+            fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=row, col=col,
+                             showspikes=True, spikemode="across", spikesnap="cursor",
+                             spikecolor=C["blue"], spikethickness=1)
+            fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=row, col=col)
+        for row, col in [(1, 2), (2, 1), (2, 2), (3, 2)]:
+            fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=row, col=col)
+            fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=row, col=col)
+
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_xaxes(title_text="Terminal price", row=1, col=2)
+        fig.update_yaxes(title_text="Density", row=1, col=2)
+        fig.update_xaxes(title_text="Log return", tickformat=".1%", row=2, col=1)
+        fig.update_yaxes(title_text="Density", row=2, col=1)
+        fig.update_xaxes(title_text="Day", row=2, col=2)
+        fig.update_yaxes(title_text="Price ($)", row=2, col=2)
+        fig.update_xaxes(title_text="Calendar date", row=3, col=1)
+        fig.update_yaxes(title_text="Annualized vol", tickformat=".0%", row=3, col=1)
+        fig.update_xaxes(title_text="Theoretical z", row=3, col=2)
+        fig.update_yaxes(title_text="Sample z", row=3, col=2)
+
+        path_out = OUT / f"mc_dashboard6_{self.eng.ticker}.html"
+        fig.write_html(str(path_out), include_plotlyjs="cdn",
+                       config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
+        rlog(f"  [green]OK[/green] 6-panel dashboard -> [cyan]{path_out}[/cyan]")
+        if show:
+            fig.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
+        return fig
+
+    def render_3d(self, paths: np.ndarray, N: int, show=True, no_anim=False):
+        """Generate density, path-surface, explorer, and animated 3D Monte Carlo views."""
+        S0 = float(self.eng.S0)
+        Z = np.asarray(paths, dtype=float)
+        n = int(Z.shape[0])
+        total_days = int(Z.shape[1] - 1)
+        x = np.arange(total_days + 1, dtype=float)
+        y = np.arange(n, dtype=float)
+        mean_path = Z.mean(axis=0)
+
+        z_low, z_high = _surface_z_bounds(Z, S0)
+        x_span = max(float(total_days), 1.0)
+        y_span = max(float(n - 1), 1.0)
+        base_span = max(x_span, y_span)
+        z_ratio = max(float(z_high - z_low), 1e-9) / max(base_span, 1e-9)
+        z_ratio = float(np.clip(z_ratio, 0.25, 0.95))
+
+        n_bins = int(np.clip(np.sqrt(n), 28, 64))
+        price_low = float(np.percentile(Z, 0.5))
+        price_high = float(np.percentile(Z, 99.5))
+        if not np.isfinite(price_low) or not np.isfinite(price_high) or price_high <= price_low:
+            price_low, price_high = z_low, z_high
+        price_edges = np.linspace(price_low, price_high, n_bins + 1)
+        price_centers = 0.5 * (price_edges[:-1] + price_edges[1:])
+        density = np.zeros((len(x), n_bins), dtype=float)
+        ridge_idx = np.zeros(len(x), dtype=int)
+        mean_density = np.zeros(len(x), dtype=float)
+        for j in range(len(x)):
+            hist, _ = np.histogram(Z[:, j], bins=price_edges, density=True)
+            density[j] = hist
+            ridge_idx[j] = int(np.argmax(hist))
+            mean_density[j] = float(np.interp(mean_path[j], price_centers, hist, left=0.0, right=0.0))
+
+        T_grid, P_grid = np.meshgrid(x, price_centers, indexing="ij")
+        density_max = float(max(np.max(density), 1e-9))
+        ridge_prices = price_centers[ridge_idx]
+
+        if HAS_MPL:
+
+            fig_density = plt.figure(figsize=(12, 7.2))
+            ax = fig_density.add_subplot(111, projection="3d")
+            surf = ax.plot_surface(T_grid, P_grid, density, cmap="plasma", linewidth=0, antialiased=True, alpha=0.96)
+            ax.plot_wireframe(T_grid, P_grid, density, rstride=max(1, len(x) // 18), cstride=max(1, n_bins // 14),
+                              color="white", linewidth=0.35, alpha=0.15)
+            ax.contourf(T_grid, P_grid, density, zdir="z", offset=0.0, levels=18, cmap="plasma", alpha=0.9)
+            ax.plot(x, mean_path, mean_density, color="#ff4d4f", linewidth=2.8, label="Mean path")
+            ax.plot(x, ridge_prices, density[np.arange(len(x)), ridge_idx], color="white", linewidth=2.0,
+                    linestyle="--", label="Peak density ridge")
+
+            plane_x = np.array([[x[0], x[-1]], [x[0], x[-1]]], dtype=float)
+            plane_y = np.array([[S0, S0], [S0, S0]], dtype=float)
+            plane_z = np.array([[0.0, 0.0], [density_max, density_max]], dtype=float)
+            ax.plot_surface(plane_x, plane_y, plane_z, color="#58a6ff", alpha=0.12, linewidth=0, shade=False)
+
+            ax.set_title(f"{self.eng.ticker} Density Surface Over Time", fontsize=11, pad=14)
+            ax.set_xlabel("Time step t", fontsize=9, labelpad=8)
+            ax.set_ylabel("Price S(t)", fontsize=9, labelpad=8)
+            ax.set_zlabel("Probability density f(S,t)", fontsize=9, labelpad=8)
+            ax.tick_params(axis="both", which="major", labelsize=8, pad=1)
+            ax.tick_params(axis="z", which="major", labelsize=8, pad=2)
+            ax.view_init(elev=25, azim=-60)
+            fig_density.colorbar(surf, ax=ax, shrink=0.68, pad=0.08, label="Density")
+            ax.legend(loc="upper left", fontsize=8)
+            fig_density.tight_layout()
+            plt.close(fig_density)
+
+        fig_density_html = go.Figure()
+        fig_density_html.add_trace(
+            go.Surface(
+                x=T_grid,
+                y=P_grid,
+                z=density,
+                colorscale="Plasma",
+                opacity=0.96,
+                colorbar=dict(title="Density", len=0.68),
+                contours=dict(z=dict(show=True, usecolormap=True, project=dict(z=True), width=1)),
+                hovertemplate="Day=%{x}<br>Price=$%{y:,.2f}<br>Density=%{z:.5f}<extra></extra>",
+                name="Density surface",
+            )
+        )
+        for price_idx in range(0, n_bins, max(1, n_bins // 12)):
+            fig_density_html.add_trace(
+                go.Scatter3d(
+                    x=x,
+                    y=np.full(len(x), price_centers[price_idx], dtype=float),
+                    z=density[:, price_idx],
+                    mode="lines",
+                    line=dict(color="rgba(255,255,255,0.18)", width=1),
+                    hoverinfo="skip",
+                    showlegend=False,
+                )
+            )
+        fig_density_html.add_trace(
+            go.Scatter3d(
+                x=x,
+                y=mean_path,
+                z=mean_density,
+                mode="lines",
+                line=dict(color=C["red"], width=5),
+                name="Mean path",
+                hovertemplate="Day=%{x}<br>Mean=$%{y:,.2f}<br>Density=%{z:.5f}<extra></extra>",
+            )
+        )
+        fig_density_html.add_trace(
+            go.Scatter3d(
+                x=x,
+                y=ridge_prices,
+                z=density[np.arange(len(x)), ridge_idx],
+                mode="lines",
+                line=dict(color="white", width=4, dash="dash"),
+                name="Peak density ridge",
+                hovertemplate="Day=%{x}<br>Ridge=$%{y:,.2f}<br>Density=%{z:.5f}<extra></extra>",
+            )
+        )
+        fig_density_html.add_trace(
+            go.Surface(
+                x=np.array([[x[0], x[-1]], [x[0], x[-1]]], dtype=float),
+                y=np.array([[S0, S0], [S0, S0]], dtype=float),
+                z=np.array([[0.0, 0.0], [density_max, density_max]], dtype=float),
+                showscale=False,
+                opacity=0.12,
+                colorscale=[[0.0, C["blue"]], [1.0, C["blue"]]],
+                hoverinfo="skip",
+                name="S0 plane",
+            )
+        )
+        fig_density_html.update_layout(
+            **self._plotly_theme(),
+            scene=dict(
+                xaxis=dict(title="Time step t", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"]),
+                yaxis=dict(title="Price S(t)", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[price_low, price_high]),
+                zaxis=dict(title="Probability density f(S,t)", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[0, density_max * 1.03]),
+                aspectmode="manual",
+                aspectratio=dict(x=1.25, y=1.0, z=0.62),
+                camera=dict(eye=dict(x=1.7, y=-1.75, z=1.0)),
+                dragmode="orbit",
+            ),
+            margin=dict(l=20, r=20, b=20, t=96),
+            title=dict(
+                text=(
+                    f"<b>Monte Carlo Density Surface</b> - {self.eng.ticker}<br>"
+                    f"{n} paths x {total_days} days - widening lognormal cone"
+                ),
+                x=0.5, y=0.97, xanchor="center", yanchor="top",
+                font=dict(size=17, color=C["title"]),
+            ),
+            scene_hovermode="closest",
+        )
+        density_html_path = OUT / f"mc_density_surface_{self.eng.ticker}.html"
+        fig_density_html.write_html(
+            str(density_html_path),
+            include_plotlyjs="cdn",
+            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
+        )
+        rlog(f"  [green]OK[/green] 3D density surface (html) -> [cyan]{density_html_path}[/cyan]")
+
+        s0_plane_z = np.full((2, len(x)), S0, dtype=float)
+        s0_plane_y = np.vstack([np.zeros(len(x)), np.full(len(x), max(y_span, 1.0))])
+        s0_plane_x = np.vstack([x, x])
+
+        surface_theme = dict(
+            scene=dict(
+                xaxis=dict(title="Day index", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"]),
+                yaxis=dict(title="Simulation index", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"]),
+                zaxis=dict(title="Price S(t)", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[z_low, z_high]),
+                aspectmode="manual",
+                aspectratio=dict(x=1.35, y=max(0.45, y_span / x_span), z=z_ratio),
+                camera=dict(eye=dict(x=1.75, y=1.7, z=0.95)),
+                dragmode="orbit",
+            ),
+            margin=dict(l=20, r=20, b=20, t=96),
+            title=dict(
+                text=(
+                    f"<b>Monte Carlo Path Surface</b> - {self.eng.ticker}<br>"
+                    f"{n} paths x {total_days} days - hover any (day, path) point"
+                ),
+                x=0.5, y=0.97, xanchor="center", yanchor="top",
+                font=dict(size=17, color=C["title"]),
+            ),
+        )
+
+        fig_surface = go.Figure()
+        fig_surface.add_trace(
+            go.Surface(
+                x=x, y=y, z=Z, colorscale="Plasma", opacity=0.96,
+                colorbar=dict(title="Price ($)", len=0.68),
+                hovertemplate="Day=%{x}<br>Path=%{y}<br>Price=$%{z:,.2f}<extra></extra>",
+                name="Path surface",
+                showscale=True,
+            )
+        )
+        fig_surface.add_trace(
+            go.Surface(
+                x=s0_plane_x,
+                y=s0_plane_y,
+                z=s0_plane_z,
+                showscale=False,
+                opacity=0.14,
+                colorscale=[[0.0, C["blue"]], [1.0, C["blue"]]],
+                hoverinfo="skip",
+                name="S0 plane",
+            )
+        )
+        fig_surface.add_trace(
+            go.Scatter3d(
+                x=x,
+                y=np.full_like(x, y_span / 2.0, dtype=float),
+                z=mean_path,
+                mode="lines",
+                line=dict(color=C["red"], width=4),
+                name="Mean path",
+                hovertemplate="Day=%{x}<br>Mean=$%{z:,.2f}<extra></extra>",
+            )
+        )
+        fig_surface.update_layout(
+            **self._plotly_theme(),
+            **surface_theme,
+            scene_hovermode="closest",
+        )
+
+        path_surf = OUT / f"mc_surface_{self.eng.ticker}.html"
+        fig_surface.write_html(
+            str(path_surf),
+            include_plotlyjs="cdn",
+            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
+        )
+        rlog(f"  [green]OK[/green] 3D interactive surface -> [cyan]{path_surf}[/cyan]")
+        if show:
+            fig_surface.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
+
+        n_paths = n
+        sample_paths = Z
+
+        fig_paths = go.Figure()
+        for i in range(n_paths):
+            final_val = sample_paths[i, -1]
+            line_color = C["green"] if final_val > S0 * 1.35 else C["red"] if final_val < S0 * 0.75 else C["blue"]
+            fig_paths.add_trace(
+                go.Scatter3d(
+                    x=x,
+                    y=np.full_like(x, i, dtype=float),
+                    z=sample_paths[i],
+                    mode="lines",
+                    line=dict(color=line_color, width=3),
+                    opacity=0.72,
+                    showlegend=False,
+                    hovertemplate="Day=%{x}<br>Path=#" + str(i + 1) + "<br>Price=$%{z:,.2f}<extra></extra>",
+                )
+            )
+
+        fig_paths.add_trace(
+            go.Scatter3d(
+                x=x,
+                y=np.full_like(x, (n_paths - 1) / 2.0, dtype=float),
+                z=sample_paths.mean(axis=0),
+                mode="lines",
+                line=dict(color=C["amber"], width=9),
+                name="Sample mean",
+                hovertemplate="Day=%{x}<br>Mean=$%{z:,.2f}<extra></extra>",
+            )
+        )
+        fig_paths.add_trace(
+            go.Scatter3d(
+                x=x,
+                y=np.full_like(x, (n_paths - 1) * 0.08, dtype=float),
+                z=np.full_like(x, S0, dtype=float),
+                mode="lines",
+                line=dict(color=C["red"], width=5, dash="dash"),
+                name="S0 reference",
+                hovertemplate="Day=%{x}<br>S0=$%{z:,.2f}<extra></extra>",
+            )
+        )
+
+        y_ratio_paths = max(float(n_paths - 1), 1.0) / x_span
+        fig_paths.update_layout(
+            **self._plotly_theme(),
+            scene=dict(
+                xaxis=dict(title="Days", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"]),
+                yaxis=dict(title="Path #", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"]),
+                zaxis=dict(title="Price ($)", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[z_low, z_high]),
+                aspectmode="manual",
+                aspectratio=dict(x=1.45, y=max(0.36, y_ratio_paths), z=max(0.28, z_ratio * 0.92)),
+                camera=dict(eye=dict(x=1.65, y=-1.35, z=0.78)),
+            ),
+            margin=dict(l=20, r=20, b=20, t=96),
+            title=dict(
+                text=(
+                    f"<b>3D Path Explorer</b> - {self.eng.ticker}<br>"
+                    f"{n_paths} sampled paths - drag to rotate - zoom/pan enabled"
+                ),
+                x=0.5, y=0.97, xanchor="center", yanchor="top",
+                font=dict(size=17, color=C["title"]),
+            ),
+            scene_hovermode="closest",
+        )
+
+        path_anim = OUT / f"mc_3d_{self.eng.ticker}.html"
+        fig_paths.write_html(
+            str(path_anim),
+            include_plotlyjs="cdn",
+            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
+        )
+        rlog(f"  [green]OK[/green] 3D movable path explorer -> [cyan]{path_anim}[/cyan]")
+        if show:
+            fig_paths.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
+
+        if no_anim:
+            return
+
+        frames = []
+        for t in range(len(x)):
+            frame_traces = []
+            current_vals = sample_paths[:, t]
+            above_count = int(np.sum(current_vals > S0))
+            below_count = int(n_paths - above_count)
+            for i in range(n_paths):
+                final_val = sample_paths[i, -1]
+                line_color = C["green"] if final_val > S0 else C["red"]
+                frame_traces.append(
+                    go.Scatter3d(
+                        x=x[: t + 1],
+                        y=np.full(t + 1, i, dtype=float),
+                        z=sample_paths[i, : t + 1],
+                        mode="lines",
+                        line=dict(color=line_color, width=3),
+                        opacity=0.78,
+                        showlegend=False,
+                        hovertemplate="Day=%{x}<br>Path=#" + str(i + 1) + "<br>Price=$%{z:,.2f}<extra></extra>",
+                    )
+                )
+            frame_traces.append(
+                go.Scatter3d(
+                    x=x[: t + 1],
+                    y=np.full(t + 1, (n_paths - 1) / 2.0, dtype=float),
+                    z=sample_paths.mean(axis=0)[: t + 1],
+                    mode="lines",
+                    line=dict(color=C["amber"], width=7),
+                    name="Mean path",
+                    hovertemplate="Day=%{x}<br>Mean=$%{z:,.2f}<extra></extra>",
+                )
+            )
+            frame_traces.append(
+                go.Scatter3d(
+                    x=x[: t + 1],
+                    y=np.full(t + 1, (n_paths - 1) * 0.08, dtype=float),
+                    z=np.full(t + 1, S0, dtype=float),
+                    mode="lines",
+                    line=dict(color=C["blue"], width=4, dash="dash"),
+                    name="S0",
+                    hovertemplate="Day=%{x}<br>S0=$%{z:,.2f}<extra></extra>",
+                )
+            )
+            frames.append(
+                go.Frame(
+                    name=str(t),
+                    data=frame_traces,
+                    layout=go.Layout(
+                        title=dict(
+                            text=(
+                                f"<b>3D Path Reveal</b> - {self.eng.ticker} | Day {t}/{total_days}<br>"
+                                f"<span style='font-size:11px;color:{C['muted']}'>Above S0: {above_count} | Below S0: {below_count}</span>"
+                            )
+                        )
+                    ),
+                )
+            )
+
+        fig_anim = go.Figure(
+            data=frames[0].data if frames else [],
+            frames=frames,
+        )
+        fig_anim.update_layout(
+            **self._plotly_theme(),
+            scene=dict(
+                xaxis=dict(title="Day index", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[0, total_days]),
+                yaxis=dict(title="Simulation index", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[0, max(n_paths - 1, 1)]),
+                zaxis=dict(title="Price S(t)", backgroundcolor=C["bg2"], gridcolor=C["border"],
+                           zerolinecolor=C["border"], color=C["muted"], range=[z_low, z_high]),
+                aspectmode="manual",
+                aspectratio=dict(x=1.5, y=max(0.52, y_span / x_span), z=max(0.34, z_ratio * 0.88)),
+                camera=dict(eye=dict(x=2.1, y=-1.95, z=1.15)),
+                dragmode="orbit",
+            ),
+            margin=dict(l=20, r=20, b=20, t=104),
+            title=dict(
+                text=(
+                    f"<b>3D Path Reveal</b> - {self.eng.ticker} | Day 0/{total_days}<br>"
+                    f"<span style='font-size:11px;color:{C['muted']}'>Above S0: {int(np.sum(sample_paths[:, 0] > S0))} | Below S0: {int(np.sum(sample_paths[:, 0] <= S0))}</span>"
+                ),
+                x=0.5, y=0.97, xanchor="center", yanchor="top",
+                font=dict(size=17, color=C["title"]),
+            ),
+            scene_hovermode="closest",
+            uirevision="mc-3d-animation",
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    x=0.02,
+                    y=1.02,
+                    xanchor="left",
+                    yanchor="bottom",
+                    buttons=[
+                        dict(
+                            label="Play",
+                            method="animate",
+                            args=[None, dict(frame=dict(duration=35, redraw=True),
+                                             transition=dict(duration=0),
+                                             fromcurrent=True, mode="immediate")],
+                        ),
+                        dict(
+                            label="Pause",
+                            method="animate",
+                            args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                               transition=dict(duration=0),
+                                               mode="immediate")],
+                        ),
+                    ],
+                )
+            ],
+            sliders=[
+                dict(
+                    active=0,
+                    x=0.12,
+                    y=0.02,
+                    len=0.82,
+                    currentvalue=dict(prefix="Day: ", font=dict(color=C["text"])),
+                    steps=[
+                        dict(
+                            label=str(t),
+                            method="animate",
+                            args=[[str(t)], dict(frame=dict(duration=0, redraw=True),
+                                                 transition=dict(duration=0), mode="immediate")],
+                        )
+                        for t in range(len(x))
+                    ],
+                )
+            ],
+        )
+
+        anim_path = OUT / f"mc_3d_animation_{self.eng.ticker}.html"
+        fig_anim.write_html(
+            str(anim_path),
+            include_plotlyjs="cdn",
+            auto_play=False,
+            config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False},
+        )
+        rlog(f"  [green]OK[/green] 3D animation -> [cyan]{anim_path}[/cyan]")
+        if show:
+            fig_anim.show(config={"displayModeBar": True, "scrollZoom": True, "displaylogo": False})
+
+    def render_mc_diagnostics(self, adv: dict, show=True):
+        bs = float(adv.get("black_scholes_call", np.nan))
+        horizon_days = int(adv.get("horizon_days", 252))
+        profiles = adv.get("convergence_profiles", {})
+        pseudo = profiles.get("pseudo", {})
+        anti = profiles.get("antithetic", {})
+        qmc_prof = profiles.get("qmc", {})
+        n_grid = np.array(pseudo.get("n_grid", adv["convergence"]["n_grid"]), dtype=float)
+        eps = float(pseudo.get("epsilon", max(abs(bs) * 0.01, 0.01)))
+        min_n = pseudo.get("min_n_epsilon")
+        final_n = int(pseudo.get("final_n", 0) or 0)
+        final_mcse = float(pseudo.get("final_mcse", np.nan))
+        final_std = float(pseudo.get("final_std", np.nan))
+
+        fig = make_subplots(
+            rows=4,
+            cols=2,
+            subplot_titles=(
+                "Convergence Bands: Running Mean ± 2MCSE",
+                "Convergence Slope: log|error| vs log(N)",
+                "Trace Plot: Running Mean ± 2MCSE",
+                "Trace Plot: Running Sigma",
+                "ESS / N Applicability",
+                "Advanced Option Prices",
+                "Simulated vs Historical Overlay",
+                "Variance Reduction Ratios",
+            ),
+            vertical_spacing=0.11,
+            horizontal_spacing=0.10,
+            specs=[
+                [{"type": "xy"}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}],
+                [{"type": "xy"}, {"type": "xy"}],
+            ],
+        )
+        colors = {"pseudo": C["cyan"], "antithetic": C["green"], "qmc": C["amber"]}
+        labels = {"pseudo": "Standard MC", "antithetic": "Antithetic MC", "qmc": "Sobol QMC"}
+
+        for key, prof in [("pseudo", pseudo), ("antithetic", anti), ("qmc", qmc_prof)]:
+            grid = np.array(prof.get("n_grid", []), dtype=float)
+            if len(grid) == 0:
+                continue
+            est = np.array(prof["estimates"], dtype=float)
+            se = np.array(prof["stderrs"], dtype=float)
+            err = np.array(prof["errors"], dtype=float)
+            fig.add_trace(go.Scatter(
+                x=grid, y=est, mode="lines+markers", name=labels[key],
+                line=dict(color=colors[key], width=2), marker=dict(size=6),
+                error_y=dict(type="data", array=2 * se, visible=True, color=colors[key], thickness=1),
+                hovertemplate=f"{labels[key]}<br>N=%{{x}}<br>Mean=$%{{y:.4f}}<br>2MCSE=%{{error_y.array:.4f}}<extra></extra>",
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=grid, y=np.clip(err, 1e-12, None), mode="lines+markers", name=f"{labels[key]} |error|",
+                line=dict(color=colors[key], width=2), marker=dict(size=6), showlegend=False,
+                hovertemplate=f"{labels[key]}<br>N=%{{x}}<br>|error|=%{{y:.5f}}<extra></extra>",
+            ), row=1, col=2)
+        if np.isfinite(bs):
+            fig.add_hline(
+                y=bs,
+                line_color=C["amber"],
+                line_dash="dash",
+                row=1,
+                col=1,
+                annotation_text=f"BS ${bs:.4f}",
+                annotation_font=dict(color=C["amber"], size=9),
+            )
+            fig.add_hrect(y0=bs - eps, y1=bs + eps, fillcolor="rgba(63,185,80,0.08)", line_width=0, row=1, col=1)
+        if len(n_grid):
+            ref = np.clip(np.array(pseudo.get("errors", [1.0]), dtype=float), 1e-12, None)
+            ref_line = ref[0] * np.sqrt(n_grid[0] / n_grid)
+            fig.add_trace(go.Scatter(
+                x=n_grid,
+                y=ref_line,
+                mode="lines",
+                name="Slope -1/2 reference",
+                line=dict(color=C["purple"], width=2, dash="dash"),
+                hovertemplate="N=%{x}<br>Ref=%{y:.5f}<extra></extra>",
+            ), row=1, col=2)
+        if min_n is not None:
+            fig.add_vline(x=min_n, line_color=C["green"], line_dash="dot", line_width=1.4, row=1, col=1)
+            fig.add_vline(x=min_n, line_color=C["green"], line_dash="dot", line_width=1.4, row=1, col=2)
+            fig.add_annotation(
+                x=min_n,
+                y=0.98,
+                xref="x2",
+                yref="y2 domain",
+                text=f"min N in ε-band: {min_n:,}",
+                showarrow=False,
+                xanchor="left",
+                bgcolor="rgba(13,17,23,0.82)",
+                bordercolor=C["green"],
+                borderwidth=1,
+                font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+            )
+        fig.add_annotation(
+            xref="x2 domain", yref="y2 domain", x=0.98, y=0.06,
+            text=(
+                f"Std={pseudo.get('loglog_slope', float('nan')):+.3f}<br>"
+                f"Anti={anti.get('loglog_slope', float('nan')):+.3f}<br>"
+                f"Sobol={qmc_prof.get('loglog_slope', float('nan')):+.3f}"
+            ),
+            showarrow=False, align="right",
+            bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        running_n = np.arange(1, len(pseudo.get("running_mean", [])) + 1, dtype=float)
+        running_mean = np.array(pseudo.get("running_mean", []), dtype=float)
+        running_std = np.array(pseudo.get("running_std", []), dtype=float)
+        running_mcse = np.array(pseudo.get("running_mcse", []), dtype=float)
+        if len(running_n):
+            fig.add_trace(go.Scatter(
+                x=running_n, y=running_mean + 2 * running_mcse, mode="lines",
+                line=dict(color="#9aa4b2", width=0), showlegend=False, hoverinfo="skip"
+            ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=running_n, y=running_mean - 2 * running_mcse, mode="lines",
+                fill="tonexty", fillcolor="rgba(154,164,178,0.18)",
+                line=dict(color="#9aa4b2", width=0), name="±2MCSE band", hoverinfo="skip"
+            ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=running_n, y=running_mean, mode="lines", name="Running mean",
+                line=dict(color=C["cyan"], width=2),
+                hovertemplate="N=%{x}<br>Running mean=$%{y:.4f}<extra></extra>"
+            ), row=2, col=1)
+            fig.add_trace(go.Scatter(
+                x=running_n, y=running_std, mode="lines", name="Running sigma",
+                line=dict(color=C["green"], width=2),
+                hovertemplate="N=%{x}<br>Running sigma=$%{y:.4f}<extra></extra>"
+            ), row=2, col=2)
+            if np.isfinite(bs):
+                fig.add_hline(y=bs, line_color=C["amber"], line_dash="dash", row=2, col=1)
+            if min_n is not None:
+                fig.add_vline(x=min_n, line_color=C["green"], line_dash="dot", line_width=1.4, row=2, col=1)
+                fig.add_vline(x=min_n, line_color=C["green"], line_dash="dot", line_width=1.4, row=2, col=2)
+            if final_n > 1 and np.isfinite(final_mcse):
+                fig.add_annotation(
+                    xref="x3 domain", yref="y3 domain", x=0.98, y=0.98,
+                    text=f"Final MCSE @ N={final_n:,}: ±{2 * final_mcse:.4f}<br>Final σ={final_std:.4f}",
+                    showarrow=False, align="right",
+                    bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+                    font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+                )
+
+        ess_names = ["Pseudo MC", "Antithetic", "Sobol QMC"]
+        fig.add_trace(go.Bar(
+            x=[1.0, 1.0, 1.0], y=ess_names, orientation="h",
+            marker_color=["rgba(250,238,218,0.16)"] * 3,
+            marker_line_color=[C["border"]] * 3,
+            marker_line_width=1,
+            text=["Not applicable", "Not applicable", "Not applicable"],
+            textposition="inside",
+            insidetextanchor="middle",
+            textfont=dict(color=C["text"], size=10),
+            hovertemplate="%{y}<br>ESS/N not applicable for iid or low-discrepancy paths<extra></extra>",
+            name="ESS status",
+            showlegend=False,
+        ), row=3, col=1)
+        fig.add_annotation(
+            xref="x5 domain", yref="y5 domain", x=0.98, y=0.98,
+            text="ESS applies to MCMC chains.<br>GBM pseudo, antithetic, and Sobol are independent samplers, not chain states.",
+            showarrow=False, align="right",
+            bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+            font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+        )
+        fig.add_annotation(
+            xref="x5 domain", yref="y5 domain", x=0.02, y=0.98,
+            text="Use RNG ACF / Q-Q checks instead of ESS here",
+            showarrow=False, align="left",
+            bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+            font=dict(color=C["muted"], size=9, family="Consolas, Menlo, monospace"),
+        )
+
+        price_labels = ["Euro Pseudo", "Euro Anti", "Euro QMC", "Euro CV", "Asian", "Barrier", "American"]
+        price_vals = [
+            adv["euro_plain"]["price"],
+            adv["euro_antithetic"]["price"],
+            adv["euro_qmc"]["price"],
+            adv["euro_control_variate"]["price"],
+            adv["asian_call"]["price"],
+            adv["barrier_up_out_call"]["price"],
+            adv["american_put_lsmc"]["price"],
+        ]
+        price_se = [
+            adv["euro_plain"]["stderr"],
+            adv["euro_antithetic"]["stderr"],
+            adv["euro_qmc"]["stderr"],
+            adv["euro_control_variate"]["stderr"],
+            adv["asian_call"]["stderr"],
+            adv["barrier_up_out_call"]["stderr"],
+            adv["american_put_lsmc"]["stderr"],
+        ]
+        fig.add_trace(go.Bar(
+            x=price_labels,
+            y=price_vals,
+            marker=dict(color=[C["cyan"], C["blue"], C["green"], C["amber"], C["purple"], C["red"], C["muted"]]),
+            error_y=dict(type="data", array=price_se, visible=True, thickness=1),
+            name="Price +- SE",
+            hovertemplate="%{x}<br>Price=$%{y:.4f}<extra></extra>",
+        ), row=3, col=2)
+
+        horizon = max(1, min(horizon_days, len(self.eng.history) - 1, 252))
+        hist_ret = np.log(self.eng.history / self.eng.history.shift(horizon)).dropna().values
+        sim_terminal_ret = np.log(
+            np.asarray(self.eng.simulate(N=horizon, num_sim=4000, seed=909)[0][:, -1]) / self.eng.S0
+        )
+        if len(hist_ret) > 5 and len(sim_terminal_ret) > 10:
+            sim_q5 = float(np.quantile(sim_terminal_ret, 0.05))
+            sim_q95 = float(np.quantile(sim_terminal_ret, 0.95))
+            sim_q1 = float(np.quantile(sim_terminal_ret, 0.01))
+            sim_q99 = float(np.quantile(sim_terminal_ret, 0.99))
+            hist_in_band = float(np.mean((hist_ret >= sim_q5) & (hist_ret <= sim_q95)))
+            breach_vals = hist_ret[hist_ret < sim_q5]
+            tail_flag = bool((hist_ret.min() < sim_q1) or (hist_ret.max() > sim_q99))
+            x_hist = np.linspace(min(hist_ret.min(), sim_terminal_ret.min()), max(hist_ret.max(), sim_terminal_ret.max()), 260)
+            kde_hist = scipy_stats.gaussian_kde(hist_ret)
+            kde_sim = scipy_stats.gaussian_kde(sim_terminal_ret)
+            fig.add_trace(go.Scatter(
+                x=x_hist, y=kde_sim(x_hist), mode="lines", name="Simulated KDE",
+                line=dict(color=C["blue"], width=2.4),
+                hovertemplate="Return: %{x:.2%}<br>Sim density=%{y:.4f}<extra></extra>",
+            ), row=4, col=1)
+            fig.add_trace(go.Scatter(
+                x=x_hist, y=kde_hist(x_hist), mode="lines", name="Historical KDE",
+                line=dict(color=C["amber"], width=2.2),
+                hovertemplate="Return: %{x:.2%}<br>Hist density=%{y:.4f}<extra></extra>",
+            ), row=4, col=1)
+            if len(breach_vals):
+                fig.add_trace(go.Scatter(
+                    x=breach_vals, y=np.zeros_like(breach_vals), mode="markers", name="Hist VaR breaches",
+                    marker=dict(color=C["red"], size=8, symbol="circle"),
+                    hovertemplate="Historical breach: %{x:.2%}<extra></extra>",
+                ), row=4, col=1)
+            fig.add_vline(x=sim_q5, line_color=C["red"], line_dash="dash", line_width=1.6, row=4, col=1)
+            fig.add_vline(x=sim_q95, line_color=C["green"], line_dash="dash", line_width=1.6, row=4, col=1)
+            fig.add_annotation(
+                xref="x7 domain", yref="y7 domain", x=0.98, y=0.98,
+                text=(
+                    f"Hist in sim P5-P95: {hist_in_band:.1%}<br>"
+                    f"VaR breaches: {len(breach_vals)}<br>"
+                    f"P1/P99 tail miss: {'Yes' if tail_flag else 'No'}"
+                ),
+                showarrow=False, align="right",
+                bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+                font=dict(color=C["text"], size=9, family="Consolas, Menlo, monospace"),
+            )
+        else:
+            fig.add_annotation(
+                xref="x7 domain", yref="y7 domain", x=0.5, y=0.5,
+                text="Not enough historical horizon returns to compare with simulation.",
+                showarrow=False, align="center",
+                bgcolor="rgba(13,17,23,0.78)", bordercolor=C["border"], borderwidth=1,
+                font=dict(color=C["text"], size=10, family="Consolas, Menlo, monospace"),
+            )
+
+        vr_labels = ["Antithetic", "QMC Sobol", "Control Variate"]
+        vr_vals = [
+            float(adv["variance_reduction_ratio_antithetic"]),
+            float(adv["variance_reduction_ratio_qmc"]),
+            float(adv["variance_reduction_ratio_cv"]),
+        ]
+        fig.add_trace(go.Bar(
+            x=vr_labels,
+            y=vr_vals,
+            marker=dict(color=[C["blue"], C["green"], C["amber"]]),
+            name="Variance ratio",
+            text=[f"{v:.3f}" for v in vr_vals],
+            textposition="outside",
+            hovertemplate="%{x}<br>Ratio=%{y:.4f}<extra></extra>",
+        ), row=4, col=2)
+        fig.add_hline(y=1.0, line_color=C["red"], line_dash="dot", row=4, col=2,
+                      annotation_text="Baseline 1.0", annotation_font=dict(color=C["red"], size=9))
+
+        layout = self._plotly_theme()
+        layout.update(dict(
+            title=dict(
+                text=(
+                    f"<b>Monte Carlo Diagnostics</b> - {self.eng.ticker}<br>"
+                    f"<span style='font-size:11px;color:{C['muted']}'>Standard MC slope={pseudo.get('loglog_slope', float('nan')):+.3f} | Antithetic slope={anti.get('loglog_slope', float('nan')):+.3f} | Sobol QMC slope={qmc_prof.get('loglog_slope', float('nan')):+.3f} | epsilon band=±${eps:.4f}</span>"
+                ),
+                x=0.5, y=0.98, xanchor="center", yanchor="top",
+                font=dict(size=15, color=C["title"]),
+            ),
+            height=1920,
+            margin=dict(l=70, r=70, t=130, b=120),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.12, xanchor="center", x=0.5,
+                        font=dict(size=9)),
+        ))
+        fig.update_layout(**layout)
+        for ann in fig.layout.annotations:
+            if ann.text in {
+                "Convergence Bands: Running Mean ± 2MCSE",
+                "Convergence Slope: log|error| vs log(N)",
+                "Trace Plot: Running Mean ± 2MCSE",
+                "Trace Plot: Running Sigma",
+                "ESS / N Applicability",
+                "Advanced Option Prices",
+                "Simulated vs Historical Overlay",
+                "Variance Reduction Ratios",
+            }:
+                ann.font = dict(size=12, color=C["title"])
+
+        fig.update_xaxes(title_text="Paths N", type="log", row=1, col=1)
+        fig.update_yaxes(title_text="Price ($)", row=1, col=1)
+        fig.update_xaxes(title_text="Paths N (log10)", type="log", row=1, col=2)
+        fig.update_yaxes(title_text="|running mean - true| (log10)", type="log", row=1, col=2)
+        fig.update_xaxes(title_text="Trials N", row=2, col=1)
+        fig.update_yaxes(title_text="Running mean ($)", row=2, col=1)
+        fig.update_xaxes(title_text="Trials N", row=2, col=2)
+        fig.update_yaxes(title_text="Running sigma ($)", row=2, col=2)
+        fig.update_xaxes(title_text="Applicability status", row=3, col=1, range=[0, 1.05], showticklabels=False)
+        fig.update_yaxes(title_text="Sampler", row=3, col=1)
+        fig.update_xaxes(title_text="Instrument", row=3, col=2)
+        fig.update_yaxes(title_text="Price ($)", row=3, col=2)
+        fig.update_xaxes(title_text="Horizon return", tickformat=".1%", row=4, col=1)
+        fig.update_yaxes(title_text="Density", row=4, col=1)
+        fig.update_xaxes(title_text="Method", row=4, col=2)
+        fig.update_yaxes(title_text="Variance ratio", row=4, col=2)
+
+        for r in [1, 2, 3, 4]:
+            for c in [1, 2]:
+                fig.update_xaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=c)
+                fig.update_yaxes(gridcolor=C["border"], zerolinecolor=C["border"], row=r, col=c)
+
+        path_out = OUT / f"mc_diagnostics_{self.eng.ticker}.html"
+        fig.write_html(str(path_out), include_plotlyjs="cdn", config={"displayModeBar": True, "scrollZoom": True})
+        rlog(f"  [green]OK[/green] MC diagnostics -> [cyan]{path_out}[/cyan]")
+        if show:
+            fig.show()
+        return fig
+
